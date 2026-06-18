@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Murmur</string>
+    <key>CFBundleDisplayName</key>
+    <string>Murmur</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.latentvariable.murmur</string>
+    <key>CFBundleExecutable</key>
+    <string>Murmur</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Local-first TTS. No cloud, no tracking.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Murmur simulates Copy to capture selected text when the Accessibility API is unavailable.</string>
+</dict>
+</plist>
