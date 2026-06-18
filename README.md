@@ -2,6 +2,8 @@
 
 **Fluid Voice, but for text-to-speech.** Highlight text anywhere on macOS, press a hotkey, hear it read aloud in a high-quality local [Kokoro](https://github.com/hexgrad/kokoro) voice. Fully local, fully private — no cloud, no account, no tracking.
 
+![Murmur — menu-bar controls and settings](docs/screenshot.png)
+
 ```bash
 git clone https://github.com/latent-variable/Murmur.git
 cd Murmur && bash scripts/build_app.sh && open dist/Murmur.app

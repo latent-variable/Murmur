@@ -3,6 +3,21 @@ import SwiftUI
 struct MenuContent: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var prefs: Prefs
+    @Environment(\.openSettings) private var openSettings
+
+    /// Open Settings and force it to the front, even when the app is an
+    /// accessory (no dock icon) and the window is already buried behind others.
+    private func showSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            for window in NSApp.windows where window.styleMask.contains(.titled) {
+                window.collectionBehavior.insert(.moveToActiveSpace)
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -56,9 +71,10 @@ struct MenuContent: View {
             Divider()
 
             HStack {
-                SettingsLink {
+                Button { showSettings() } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
+                .buttonStyle(.plain)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }
