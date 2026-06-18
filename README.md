@@ -1,6 +1,6 @@
 # Murmur
 
-**Fluid Voice, but for text-to-speech.** Highlight text anywhere on macOS, press a hotkey, hear it read aloud in a high-quality local [Kokoro](https://github.com/hexgrad/kokoro) voice. Fully local, fully private — no cloud, no account, no tracking.
+**[Fluid Voice](https://github.com/altic-dev/FluidVoice), but for text-to-speech.** Fluid Voice turns your voice into text locally; Murmur does the reverse — highlight text anywhere on macOS, press a hotkey, hear it read aloud in a high-quality local [Kokoro](https://github.com/hexgrad/kokoro) voice. Fully local, fully private — no cloud, no account, no tracking.
 
 ![Murmur — menu-bar controls and settings](docs/screenshot.png)
 
@@ -74,7 +74,17 @@ No microphone, no network (after the one-time model download), no input monitori
 
 ## Roadmap
 
-- [ ] Bundle a relocatable Python runtime; notarize + DMG.
+Shipped (v0.1.0):
+
+- [x] Hotkey → local Kokoro speech, streaming playback.
+- [x] AX + clipboard capture, cleanup profiles + editable rules, WAV export.
+- [x] Menu-bar app, settings, diagnostics, model auto-download, launch-at-login.
+- [x] Drag-to-install DMG (`scripts/make_dmg.sh`) + GitHub release.
+
+Next:
+
+- [ ] Notarize + Developer ID sign (drop the right-click ▸ Open step).
+- [ ] Bundle a relocatable Python runtime (run on Macs without Python 3.12).
 - [ ] Per-app capture overrides and audio caching.
 - [ ] Floating draggable mini-player window.
 - [ ] CoreML execution provider toggle.
