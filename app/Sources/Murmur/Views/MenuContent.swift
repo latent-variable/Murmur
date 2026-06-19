@@ -23,6 +23,10 @@ struct MenuContent: View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
+            if !state.axTrusted && prefs.readSource == .selection {
+                permissionBanner
+            }
+
             Divider()
 
             HStack(spacing: 10) {
@@ -100,6 +104,23 @@ struct MenuContent: View {
                     .help("Models not installed — open Settings ▸ Models")
             }
         }
+    }
+
+    private var permissionBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Accessibility needed to read selected text", systemImage: "lock.shield")
+                .font(.caption.bold()).foregroundStyle(.orange)
+            Text("Grant access, or switch Read source to Clipboard (copy first, then press the shortcut — no permission needed).")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Grant Access") { Permissions.requestAX(); Permissions.openAXSettings() }
+                    .controlSize(.small).buttonStyle(.borderedProminent)
+                Button("Use Clipboard") { prefs.readSource = .clipboard }
+                    .controlSize(.small)
+            }
+        }
+        .padding(8)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var transport: some View {

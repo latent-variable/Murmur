@@ -20,6 +20,15 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/repo"
 cp "$BIN" "$APP/Contents/MacOS/Murmur"
 cp "$ROOT/app/Resources/Info.plist" "$APP/Contents/Info.plist"
 
+# App icon (regenerate if the generator is newer than the icns).
+if [ ! -f "$ROOT/app/Resources/AppIcon.icns" ] || \
+   [ "$ROOT/scripts/make_icon.swift" -nt "$ROOT/app/Resources/AppIcon.icns" ]; then
+  echo "[build] rendering app icon"
+  swift "$ROOT/scripts/make_icon.swift" >/dev/null
+  iconutil -c icns "$ROOT/dist/AppIcon.iconset" -o "$ROOT/app/Resources/AppIcon.icns"
+fi
+cp "$ROOT/app/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
 # Bundle backend sources + launcher so a packaged app can run self-contained.
 cp -R "$ROOT/backend/server.py" "$ROOT/backend/download_models.py" \
       "$ROOT/backend/requirements.txt" "$APP/Contents/Resources/repo/" 2>/dev/null || true

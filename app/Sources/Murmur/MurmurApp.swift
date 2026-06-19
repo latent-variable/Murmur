@@ -28,6 +28,12 @@ struct MurmurApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest") { Selftest.run() }
+        if CommandLine.arguments.contains("--diag") {
+            print("Murmur capture diagnostics\n")
+            print(TextCapture.diagnose())
+            print("Log file: \(Log.url.path)")
+            exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--pipetest") {
             let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
             let prof = CommandLine.arguments.count > i + 2 ? CommandLine.arguments[i + 2] : nil

@@ -36,6 +36,7 @@ final class AppState: ObservableObject {
     @Published var lastCleaned: String = ""
     @Published var lastMethod: Capture.Method = .none
     @Published var modelsPresent = false
+    @Published var axTrusted = Permissions.axTrusted
 
     let prefs = Prefs.shared
     let backend = BackendManager()
@@ -51,6 +52,16 @@ final class AppState: ObservableObject {
 
     func bootstrap() {
         hotkey.register(prefs.hotKey)
+        Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue)")
+        // Selection capture needs Accessibility. Prompt up front so the user
+        // isn't met with a silent "No text captured" later.
+        if prefs.readSource == .selection && !Permissions.axTrusted {
+            Permissions.requestAX()
+        }
+        // Keep the published trust flag fresh (granting happens out of process).
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.axTrusted = Permissions.axTrusted }
+        }
         Task {
             status = .loadingModel
             await backend.start()
@@ -90,8 +101,16 @@ final class AppState: ObservableObject {
         let cleaned = cleanedText(capture.text)
         lastCleaned = cleaned
         guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            status = .error("No text captured")
-            resetToIdle(after: 2)
+            // Distinguish "nothing selected" from "can't capture because no permission".
+            if prefs.readSource == .selection && !Permissions.axTrusted {
+                Log.write("read aborted: no capture and Accessibility not granted")
+                status = .error("Grant Accessibility to capture")
+                Permissions.requestAX()
+            } else {
+                Log.write("read aborted: no text captured (source=\(prefs.readSource.rawValue))")
+                status = .error("No text captured")
+            }
+            resetToIdle(after: 3)
             return
         }
 

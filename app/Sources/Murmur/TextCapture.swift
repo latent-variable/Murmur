@@ -14,20 +14,37 @@ struct Capture {
 enum TextCapture {
 
     static func capture(mode: CaptureMode) -> Capture {
+        let trusted = Permissions.axTrusted
+        Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted)")
+        let result: Capture
         switch mode {
         case .accessibility:
-            if let t = viaAccessibility() { return Capture(text: t, method: .accessibility) }
-            return Capture(text: "", method: .none)
+            result = viaAccessibility().map { Capture(text: $0, method: .accessibility) }
+                ?? Capture(text: "", method: .none)
         case .clipboard:
-            if let t = viaClipboard() { return Capture(text: t, method: .clipboard) }
-            return Capture(text: "", method: .none)
+            result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+                ?? Capture(text: "", method: .none)
         case .auto:
             if let t = viaAccessibility(), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return Capture(text: t, method: .accessibility)
+                result = Capture(text: t, method: .accessibility)
+            } else {
+                result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+                    ?? Capture(text: "", method: .none)
             }
-            if let t = viaClipboard() { return Capture(text: t, method: .clipboard) }
-            return Capture(text: "", method: .none)
         }
+        Log.write("capture done method=\(result.method.rawValue) chars=\(result.text.count)")
+        return result
+    }
+
+    /// Full state dump for the `--diag` CLI and the Diagnostics tab.
+    static func diagnose() -> String {
+        var s = "Accessibility trusted: \(Permissions.axTrusted)\n"
+        let ax = viaAccessibility()
+        s += "AX selected text: \(ax.map { "\($0.count) chars" } ?? "nil")\n"
+        let clip = viaClipboard()
+        s += "Clipboard ⌘C capture: \(clip.map { "\($0.count) chars" } ?? "nil")\n"
+        s += "Existing clipboard: \((NSPasteboard.general.string(forType: .string) ?? "").count) chars\n"
+        return s
     }
 
     /// Read currently selected text from the focused UI element via AXUIElement.
@@ -83,6 +100,11 @@ enum TextCapture {
 
         // Only trust a genuinely fresh copy. No change => no selection => nil.
         let text = changed ? pb.string(forType: .string) : nil
+        if !changed {
+            Log.write(Permissions.axTrusted
+                ? "clipboard: ⌘C produced no change (no selection?)"
+                : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
+        }
 
         restore(pb, saved)
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
