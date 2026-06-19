@@ -45,35 +45,29 @@ private struct VoiceTab: View {
     @EnvironmentObject var prefs: Prefs
     @EnvironmentObject var state: AppState
     var body: some View {
-        Form {
-            Section("Voice") {
-                Picker("Voice", selection: $prefs.voice) {
-                    ForEach(groupedVoices, id: \.0) { lang, list in
-                        Section(lang) {
-                            ForEach(list) { v in Text(name(v)).tag(v.id) }
-                        }
-                    }
-                    if state.voices.isEmpty { Text(prefs.voice).tag(prefs.voice) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Voice").font(.headline)
+                Spacer()
+                Button { state.testVoice() } label: { Label("Test", systemImage: "speaker.wave.2.fill") }
+                    .controlSize(.small)
+            }
+            VoicePickerList(voices: state.voices, selection: $prefs.voice)
+                .frame(minHeight: 220)
+                .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+
+            Form {
+                Section("Playback") {
+                    slider("Speed", $prefs.speed, 0.5...2.0, "%.2f×")
+                    slider("Pitch", $prefs.pitch, -600...600, "%.0f¢")
+                    slider("Volume", $prefs.volume, 0...1, "%.0f%%", scale: 100)
                 }
-                Button("Test voice") { state.testVoice() }
             }
-            Section("Playback") {
-                slider("Speed", $prefs.speed, 0.5...2.0, "%.2f×")
-                slider("Pitch", $prefs.pitch, -600...600, "%.0f¢")
-                slider("Volume", $prefs.volume, 0...1, "%.0f%%", scale: 100)
-            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
     }
 
-    private var groupedVoices: [(String, [VoiceInfo])] {
-        Dictionary(grouping: state.voices, by: \.lang_label)
-            .sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-    }
-    private func name(_ v: VoiceInfo) -> String {
-        let base = v.id.split(separator: "_").last.map(String.init)?.capitalized ?? v.id
-        return "\(base) (\(v.gender == "female" ? "♀" : "♂"))"
-    }
     private func slider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
                         _ fmt: String, scale: Double = 1) -> some View {
         HStack {

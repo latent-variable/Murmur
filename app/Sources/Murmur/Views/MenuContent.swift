@@ -30,18 +30,11 @@ struct MenuContent: View {
             Divider()
 
             HStack(spacing: 10) {
-                Picker("", selection: $prefs.voice) {
-                    ForEach(state.voices) { v in
-                        Text("\(displayName(v))").tag(v.id)
-                    }
-                    if state.voices.isEmpty { Text(prefs.voice).tag(prefs.voice) }
-                }
-                .labelsHidden()
-                .frame(maxWidth: .infinity)
-
+                VoiceMenuButton(voices: state.voices, selection: $prefs.voice)
                 Button { state.testVoice() } label: {
                     Image(systemName: "speaker.wave.2.fill")
                 }
+                .buttonStyle(.borderless)
                 .help("Test voice")
             }
 
@@ -179,9 +172,4 @@ struct MenuContent: View {
         }
     }
 
-    private func displayName(_ v: VoiceInfo) -> String {
-        let base = v.id.split(separator: "_").last.map(String.init)?.capitalized ?? v.id
-        let flag = v.gender == "female" ? "♀" : "♂"
-        return "\(base) · \(v.lang_label) \(flag)"
-    }
 }
