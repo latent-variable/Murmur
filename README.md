@@ -70,13 +70,24 @@ cd backend && source "$HOME/Library/Application Support/Murmur/venv/bin/activate
 python download_models.py
 ```
 
-## Permissions
+## Permissions & privacy
 
-| Permission | Why | When |
-|---|---|---|
-| **Accessibility** | Read selected text directly; synthesize ⌘C for the fallback | Prompted on first read; grant in Settings ▸ Privacy ▸ Accessibility |
+Murmur runs **100% on your Mac**. No account, no telemetry, no analytics, and no network calls after the one-time model download. Synthesis happens locally in the bundled Kokoro engine. Every line of that is in this repo — read it.
 
-No microphone, no network (after the one-time model download), no input monitoring beyond the registered global hotkey.
+**One permission: Accessibility.** macOS gates two things behind it, and Murmur needs them to do its single job — turn the text you point at into speech:
+
+| What | Why Accessibility is required |
+|---|---|
+| Read the **selected text** in the frontmost app | macOS only lets a trusted app query another app's selection (`AXUIElement`) |
+| Simulate **⌘C** for the clipboard fallback | Posting a synthetic keystroke (`CGEvent`) requires the same trust |
+
+That's the entire reason. Murmur does **not** log your keystrokes, watch what you type, take screenshots, read your screen, or send anything anywhere. It reads one thing — the text you explicitly select and trigger — and speaks it. The capture code is [`TextCapture.swift`](app/Sources/Murmur/TextCapture.swift): it reads the current selection (or copies it, then **restores your clipboard**) and nothing else.
+
+**Don't want to grant it?** Switch **Read source → Clipboard** (menu bar ▸ *Use Clipboard*). Then copy text yourself and press the shortcut — reading the clipboard needs no permission at all.
+
+**Grant it:** first launch prompts you; or System Settings ▸ Privacy & Security ▸ Accessibility ▸ enable **Murmur**.
+
+**If the toggle is on but Murmur still asks:** the app is ad-hoc signed, so each reinstall is a new identity to macOS and the old grant goes stale. Remove Murmur from the list (**−** button), then grant again. To stop this for good, run `scripts/setup_signing.sh` once — it creates a stable signing identity so the grant survives updates. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Known limitations
 

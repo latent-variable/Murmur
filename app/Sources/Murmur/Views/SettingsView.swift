@@ -94,8 +94,8 @@ private struct CaptureTab: View {
                 HStack {
                     Image(systemName: trusted ? "checkmark.seal.fill" : "xmark.seal")
                         .foregroundStyle(trusted ? .green : .orange)
-                    Text(trusted ? "Granted — direct selected-text capture available"
-                                 : "Not granted — falls back to clipboard copy")
+                    Text(trusted ? "Granted — Murmur can read your selected text"
+                                 : "Not granted")
                     Spacer()
                 }
                 HStack {
@@ -103,6 +103,15 @@ private struct CaptureTab: View {
                     Button("Open Settings") { Permissions.openAXSettings() }
                     Button("Recheck") { trusted = Permissions.axTrusted }
                 }
+            }
+            Section("Why this is needed") {
+                Text("macOS only lets a trusted app read another app's selected text, and only a trusted app can simulate ⌘C for the clipboard fallback. That's the sole reason Murmur asks.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Label("No keylogging, no screen reading, nothing sent anywhere — it reads only the text you select and trigger. All local, all open source.",
+                      systemImage: "lock.shield")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Prefer no permission? Set Capture method or Read source to Clipboard, then copy text yourself before pressing the shortcut.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Last capture") {
                 LabeledContent("Method", value: state.lastMethod.rawValue)
