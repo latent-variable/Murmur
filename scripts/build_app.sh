@@ -38,7 +38,16 @@ cp "$ROOT/backend/server.py" "$ROOT/backend/download_models.py" \
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 
-# Ad-hoc sign so TCC (Accessibility) keeps a stable identity for the bundle.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"
+# Prefer a stable self-signed identity (survives reinstalls → Accessibility
+# grant persists). Falls back to ad-hoc. Set one up with scripts/setup_signing.sh.
+SIGN_ID="Murmur Local Signing"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+  echo "[build] signing with '$SIGN_ID' (stable identity)"
+  codesign --force --deep --sign "$SIGN_ID" "$APP" >/dev/null 2>&1 \
+    || { echo "[build] stable signing failed, falling back to ad-hoc"; codesign --force --deep --sign - "$APP" >/dev/null 2>&1; }
+else
+  echo "[build] ad-hoc signing (run scripts/setup_signing.sh for a persistent identity)"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"
+fi
 
 echo "[build] done -> $APP"
