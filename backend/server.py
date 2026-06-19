@@ -228,7 +228,7 @@ engine: Engine  # set in main
 
 class SynthReq(BaseModel):
     text: str
-    voice: str = "af_heart"
+    voice: str = "am_puck"
     speed: float = 1.0
     lang: Optional[str] = None
 

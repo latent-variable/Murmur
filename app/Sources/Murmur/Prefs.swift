@@ -69,7 +69,7 @@ final class Prefs: ObservableObject {
     @Published var hotKey: HotKeyCombo { didSet { saveHotKey() } }
 
     private init() {
-        voice = d.string(forKey: "voice") ?? "af_heart"
+        voice = d.string(forKey: "voice") ?? "am_puck"
         speed = d.object(forKey: "speed") as? Double ?? 1.0
         pitch = d.object(forKey: "pitch") as? Double ?? 0.0
         volume = d.object(forKey: "volume") as? Double ?? 1.0
