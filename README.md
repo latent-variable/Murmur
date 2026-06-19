@@ -4,12 +4,15 @@
 
 ![Murmur — menu-bar controls and settings](docs/screenshot.png)
 
+**Download:** grab `Murmur-*.dmg` from [Releases](https://github.com/latent-variable/Murmur/releases), drag to Applications. Because it's not notarized yet, run `xattr -cr /Applications/Murmur.app` once, then open. The app **bundles its own Python** — nothing else to install.
+
+**Or build from source:**
 ```bash
 git clone https://github.com/latent-variable/Murmur.git
 cd Murmur && bash scripts/build_app.sh && open dist/Murmur.app
 ```
 
-First launch downloads the Kokoro model (~340 MB) and builds a Python venv automatically. Grant Accessibility when prompted, then select text in any app and press **⌘⇧R**.
+First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibility when prompted, then select text in any app and press **⌘⇧R**.
 
 ## What it does
 
@@ -91,10 +94,10 @@ That's the entire reason. Murmur does **not** log your keystrokes, watch what yo
 
 ## Known limitations
 
-- Ad-hoc signed — first launch needs right-click ▸ Open (no notarization yet).
+- **Not notarized.** The app bundles its own Python, so it's large and ad-hoc signed — a DMG downloaded from a browser is quarantined and macOS says *"damaged and can't be opened."* Until it's notarized (needs an Apple Developer account), clear the quarantine once after copying to Applications: `xattr -cr /Applications/Murmur.app`, then open. Building locally avoids this entirely.
 - Pitch is a post-process shift (AVAudioUnitTimePitch); Kokoro has no native pitch control.
 - Capture defaults to **clipboard** (most reliable). Accessibility selected-text is offered as a mode but varies by app. Capture never reads a stale clipboard, so a failed copy reads nothing rather than the wrong text.
-- Requires Python 3.12 available for the first-run venv build.
+- First launch still downloads the Kokoro model (~340 MB) automatically.
 
 ## Roadmap
 
@@ -106,11 +109,11 @@ Shipped:
 - [x] Menu-bar app, settings, diagnostics, model auto-download.
 - [x] Drag-to-install DMG + GitHub release.
 - [x] Selectable compute provider (auto/CPU/CoreML) + backend test suite.
+- [x] **Self-contained: bundles its own Python runtime** — runs on Macs with no Python installed.
 
 Next:
 
-- [ ] Notarize + Developer ID sign (drop the right-click ▸ Open step).
-- [ ] Bundle a relocatable Python runtime (run on Macs without Python 3.12).
+- [ ] Notarize + Developer ID sign (drop the quarantine/right-click step — needs Apple Developer account).
 - [ ] Per-app capture overrides and audio caching.
 - [ ] Floating draggable mini-player window.
 - [ ] More export formats (MP3/AAC) and "save while reading".

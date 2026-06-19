@@ -53,21 +53,53 @@ final class BackendManager: ObservableObject {
         await waitForHealth()
     }
 
-    private func launchProcess() {
-        guard process == nil, let root = repoRoot() else {
-            if repoRoot() == nil { lastError = "Backend scripts not found." }
-            return
-        }
-        let script = root.appending(path: "scripts/run_backend.sh")
+    /// Path to a bundled, self-contained Python runtime, if present.
+    private var bundledPython: URL? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let py = res.appending(path: "python/bin/python3")
+        return FileManager.default.isExecutableFile(atPath: py.path) ? py : nil
+    }
+
+    /// Strip the download-quarantine flag from our own bundle so the nested
+    /// Python binaries can be spawned. Safe no-op if not quarantined.
+    private func stripQuarantine() {
+        let bundle = Bundle.main.bundleURL.path
+        guard bundle.hasSuffix(".app") else { return }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = [script.path]
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        p.arguments = ["-dr", "com.apple.quarantine", bundle]
+        try? p.run(); p.waitUntilExit()
+    }
+
+    private func launchProcess() {
+        guard process == nil else { return }
+        if bundledPython != nil { stripQuarantine() }
+        let p = Process()
         var env = ProcessInfo.processInfo.environment
         env["MURMUR_MODELS_DIR"] = modelsDir.path
         env["MURMUR_PORT"] = String(port)
         env["MURMUR_PROVIDER"] = Prefs.shared.providerMode
-        // Ensure uv/homebrew on PATH for first-run venv creation.
-        env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin"
+
+        if let py = bundledPython, let root = repoRoot() {
+            // Preferred: run the bundled runtime directly — no system Python.
+            let server = root.appending(path: "backend/server.py")
+            p.executableURL = py
+            p.arguments = [server.path, "--port", String(port),
+                           "--models-dir", modelsDir.path, "--provider", Prefs.shared.providerMode]
+            // Let the relocatable runtime self-locate; drop any inherited vars
+            // that would pull in the user's Python.
+            env.removeValue(forKey: "PYTHONHOME")
+            env.removeValue(forKey: "PYTHONPATH")
+            env.removeValue(forKey: "PYTHONSTARTUP")
+        } else if let root = repoRoot() {
+            // Dev fallback: build a venv via the shell launcher.
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [root.appending(path: "scripts/run_backend.sh").path]
+            env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin"
+        } else {
+            lastError = "Backend not found (no bundled runtime or dev scripts)."
+            return
+        }
         p.environment = env
 
         let logURL = FileManager.default.temporaryDirectory.appending(path: "murmur_backend.log")

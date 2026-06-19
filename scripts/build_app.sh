@@ -38,6 +38,17 @@ cp "$ROOT/backend/server.py" "$ROOT/backend/download_models.py" \
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 
+# Embed the self-contained Python runtime so the app needs no system Python.
+# Built by scripts/bundle_python.sh (cached). Without it, the app falls back to
+# building a venv from system Python (dev machines only).
+if [ "${MURMUR_BUNDLE_PYTHON:-1}" = "1" ]; then
+  if [ ! -x "$ROOT/dist/python-runtime/bin/python3" ]; then
+    bash "$ROOT/scripts/bundle_python.sh"
+  fi
+  echo "[build] embedding Python runtime"
+  ditto "$ROOT/dist/python-runtime" "$APP/Contents/Resources/python"
+fi
+
 # Prefer a stable self-signed identity (survives reinstalls → Accessibility
 # grant persists). Falls back to ad-hoc. Set one up with scripts/setup_signing.sh.
 SIGN_ID="Murmur Local Signing"

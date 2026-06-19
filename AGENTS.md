@@ -31,6 +31,23 @@ pieces an agent must keep in sync if touching either side:
   answers does it launch `scripts/run_backend.sh`. Don't assume the app owns the
   process it's talking to.
 
+## Packaging / deployment
+
+The app ships a **self-contained Python runtime** so end users need nothing
+installed. `scripts/bundle_python.sh` downloads a relocatable
+python-build-standalone CPython, pip-installs `backend/requirements.txt` into it,
+and writes `dist/python-runtime/`. `build_app.sh` embeds that at
+`Murmur.app/Contents/Resources/python`. `BackendManager.bundledPython` prefers it
+and spawns `server.py` directly; only a dev checkout with no embedded runtime
+falls back to `run_backend.sh` (venv from system Python).
+
+Gatekeeper reality: ad-hoc signed + downloaded-from-browser = quarantine →
+"damaged and can't be opened." The app self-strips its own quarantine on launch
+(`BackendManager.stripQuarantine`) so the nested Python can spawn, but the main
+app still needs `xattr -cr` or notarization. True double-click distribution
+requires `scripts/notarize.sh` + a paid Apple Developer ID. Don't claim
+"download and run" works frictionless until it's notarized.
+
 ## Where state lives (not in the repo)
 
 - venv: `~/Library/Application Support/Murmur/venv`
