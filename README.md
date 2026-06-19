@@ -4,15 +4,27 @@
 
 ![Murmur — menu-bar controls and settings](docs/screenshot.png)
 
-**Download:** grab `Murmur-*.dmg` from [Releases](https://github.com/latent-variable/Murmur/releases), drag to Applications. Because it's not notarized yet, run `xattr -cr /Applications/Murmur.app` once, then open. The app **bundles its own Python** — nothing else to install.
+The app **bundles its own Python** — nothing else to install. Pick whichever install suits you:
 
-**Or build from source:**
+**① Homebrew (easiest — one command, no Gatekeeper prompt):**
+```bash
+brew install --cask latent-variable/tap/murmur
+```
+
+**② Download the DMG:** grab `Murmur-*.dmg` from [Releases](https://github.com/latent-variable/Murmur/releases), drag to Applications. It's open-source and not notarized, so clear the download quarantine once, then open:
+```bash
+xattr -cr /Applications/Murmur.app
+```
+
+**③ Build from source** (no quarantine at all; needs Xcode command-line tools):
 ```bash
 git clone https://github.com/latent-variable/Murmur.git
 cd Murmur && bash scripts/build_app.sh && open dist/Murmur.app
 ```
 
-First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibility when prompted, then select text in any app and press **⌘⇧R**.
+First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibility when prompted (or use Clipboard mode — no permission needed), then select text in any app and press **⌘⇧R**.
+
+> **Why the extra step for ② / why "damaged"?** Apple's Gatekeeper blocks un-notarized downloads. Notarization needs a paid Apple Developer account, which this project doesn't use. Homebrew (①) handles it cleanly; building (③) sidesteps it entirely. Everything is local and the [source is all here](app/Sources/Murmur).
 
 ## What it does
 

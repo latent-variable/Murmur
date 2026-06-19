@@ -122,8 +122,15 @@ gh release create vX.Y.Z dist/Murmur-X.Y.Z.dmg --title "..." --notes "..."
 gh release upload vX.Y.Z dist/Murmur-X.Y.Z.dmg --clobber
 ```
 
-App is ad-hoc signed, not notarized — first launch needs right-click ▸ Open.
-Note that in release notes until notarization lands.
+App is ad-hoc signed, not notarized. Three install paths exist (see README):
+Homebrew cask, DMG + `xattr -cr`, build-from-source.
+
+**After every release, bump the Homebrew cask** in the separate
+`latent-variable/homebrew-tap` repo (`Casks/murmur.rb`): update `version` and
+`sha256` (`shasum -a 256 dist/Murmur-<v>.dmg`), commit, push. The cask's
+`postflight` runs `xattr -cr` so `brew install --cask latent-variable/tap/murmur`
+installs with no Gatekeeper prompt. Forgetting this leaves brew users on the old
+version.
 
 ## Acceleration (measured, not assumed)
 
