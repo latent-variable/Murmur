@@ -14,6 +14,9 @@ struct HealthInfo: Decodable {
     let models_dir: String
     let error: String?
     let sample_rate: Int
+    let provider_mode: String?
+    let active_providers: [String]?
+    let available_providers: [String]?
 }
 
 /// Thin HTTP client for the local Kokoro backend.

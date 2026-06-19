@@ -124,13 +124,32 @@ def chunk_text(text: str, max_chars: int = 320) -> list[str]:
 
 
 # --- engine ---------------------------------------------------------------------
+# onnxruntime execution-provider selection. CoreML routes to Apple GPU/ANE,
+# but for an 82M model like Kokoro it benchmarks ~even-to-slower than the
+# vectorized CPU EP (most ops fall back to CPU). So "auto" picks CPU; users can
+# force CoreML. CPU is always appended as the implicit fallback either way.
+PROVIDER_ALIASES = {
+    "cpu": "CPUExecutionProvider",
+    "coreml": "CoreMLExecutionProvider",
+}
+
+
+def resolve_provider(mode: str) -> str:
+    mode = (mode or "auto").lower()
+    if mode == "auto":
+        return "CPUExecutionProvider"
+    return PROVIDER_ALIASES.get(mode, mode)
+
+
 class Engine:
-    def __init__(self, models_dir: Path):
+    def __init__(self, models_dir: Path, provider_mode: str = "auto"):
         self.models_dir = models_dir
         self.kokoro = None
         self.model_path = models_dir / "kokoro-v1.0.onnx"
         self.voices_path = models_dir / "voices-v1.0.bin"
         self.error: Optional[str] = None
+        self.provider_mode = provider_mode
+        self.active_providers: list[str] = []
 
     def files_present(self) -> bool:
         return self.model_path.exists() and self.voices_path.exists()
@@ -141,17 +160,37 @@ class Engine:
         if not self.files_present():
             self.error = "model files missing"
             return
+        chosen = resolve_provider(self.provider_mode)
+        if self._try_load(chosen):
+            return
+        # fall back to CPU if the requested provider failed to build a session
+        if chosen != "CPUExecutionProvider":
+            log.warning("provider %s failed, falling back to CPU", chosen)
+            self._try_load("CPUExecutionProvider")
+
+    def _try_load(self, provider: str) -> bool:
         try:
             from kokoro_onnx import Kokoro
-            log.info("loading Kokoro from %s", self.models_dir)
-            self.kokoro = Kokoro(str(self.model_path), str(self.voices_path))
-            # warm pass so first real request is fast
-            self.kokoro.create("Ready.", voice="af_heart", speed=1.0, lang="en-us")
+            os.environ["ONNX_PROVIDER"] = provider  # kokoro-onnx reads this
+            log.info("loading Kokoro from %s (provider=%s)", self.models_dir, provider)
+            kokoro = Kokoro(str(self.model_path), str(self.voices_path))
+            kokoro.create("Ready.", voice="af_heart", speed=1.0, lang="en-us")  # warm
+            self.kokoro = kokoro
+            self.active_providers = list(kokoro.sess.get_providers())
             self.error = None
-            log.info("Kokoro warm, %d voices", len(self.kokoro.get_voices()))
+            log.info("Kokoro warm on %s, %d voices", self.active_providers, len(kokoro.get_voices()))
+            return True
         except Exception as e:  # noqa: BLE001
             self.error = str(e)
-            log.exception("failed to load Kokoro")
+            log.exception("failed to load Kokoro on %s", provider)
+            return False
+
+    def available_providers(self) -> list[str]:
+        try:
+            import onnxruntime as ort
+            return list(ort.get_available_providers())
+        except Exception:  # noqa: BLE001
+            return []
 
     def voices(self) -> list[str]:
         if self.kokoro is None:
@@ -206,6 +245,9 @@ def health():
         "models_dir": str(engine.models_dir),
         "error": engine.error,
         "sample_rate": SAMPLE_RATE,
+        "provider_mode": engine.provider_mode,
+        "active_providers": engine.active_providers,
+        "available_providers": engine.available_providers(),
     }
 
 
@@ -279,13 +321,15 @@ def main() -> None:
     default_models = os.environ.get("MURMUR_MODELS_DIR") or str(
         Path.home() / "Library/Application Support/Murmur/models")
     p.add_argument("--models-dir", default=default_models)
+    p.add_argument("--provider", default=os.environ.get("MURMUR_PROVIDER", "auto"),
+                   help="auto | cpu | coreml")
     p.add_argument("--no-preload", action="store_true")
     args = p.parse_args()
 
     global engine
     mdir = Path(args.models_dir).expanduser()
     mdir.mkdir(parents=True, exist_ok=True)
-    engine = Engine(mdir)
+    engine = Engine(mdir, provider_mode=args.provider)
     if not args.no_preload:
         engine.load()
 

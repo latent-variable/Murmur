@@ -65,6 +65,7 @@ final class BackendManager: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         env["MURMUR_MODELS_DIR"] = modelsDir.path
         env["MURMUR_PORT"] = String(port)
+        env["MURMUR_PROVIDER"] = Prefs.shared.providerMode
         // Ensure uv/homebrew on PATH for first-run venv creation.
         env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin"
         p.environment = env

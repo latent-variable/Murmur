@@ -272,7 +272,10 @@ private struct ModelsTab: View {
 
 private struct DiagnosticsTab: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var prefs: Prefs
     @State private var health = "checking…"
+    @State private var activeProvider = "—"
+    @State private var availableProviders = "—"
     var body: some View {
         Form {
             Section("Backend") {
@@ -283,6 +286,21 @@ private struct DiagnosticsTab: View {
                 Button("Open backend log") {
                     NSWorkspace.shared.open(FileManager.default.temporaryDirectory
                         .appending(path: "murmur_backend.log"))
+                }
+            }
+            Section("Acceleration") {
+                Picker("Compute", selection: $prefs.providerMode) {
+                    Text("Auto (CPU — fastest for Kokoro)").tag("auto")
+                    Text("CPU").tag("cpu")
+                    Text("CoreML (GPU / Neural Engine)").tag("coreml")
+                }
+                LabeledContent("Active", value: activeProvider)
+                LabeledContent("Available", value: availableProviders)
+                Text("Kokoro is small (82M); the vectorized CPU path benchmarks as fast as or faster than CoreML. Changing this restarts the engine.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Apply & restart engine") {
+                    Task { state.backend.stop(); state.backend.ready = false
+                           await state.backend.start(); await refresh() }
                 }
             }
             Section("Capture") {
@@ -296,6 +314,11 @@ private struct DiagnosticsTab: View {
     private func refresh() async {
         if let h = await state.backend.client.health() {
             health = "\(h.status) · model \(h.model_loaded ? "loaded" : "off") · \(h.sample_rate) Hz"
+            activeProvider = (h.active_providers?.first ?? "unknown")
+                .replacingOccurrences(of: "ExecutionProvider", with: "")
+            availableProviders = (h.available_providers ?? [])
+                .map { $0.replacingOccurrences(of: "ExecutionProvider", with: "") }
+                .joined(separator: ", ")
         } else { health = "unreachable" }
     }
 }

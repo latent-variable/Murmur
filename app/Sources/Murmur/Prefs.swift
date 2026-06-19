@@ -62,6 +62,7 @@ final class Prefs: ObservableObject {
     @Published var readSource: ReadSource { didSet { d.set(readSource.rawValue, forKey: "readSource") } }
     @Published var stopOnNewTrigger: Bool { didSet { d.set(stopOnNewTrigger, forKey: "stopOnNewTrigger") } }
     @Published var keepWarm: Bool { didSet { d.set(keepWarm, forKey: "keepWarm") } }
+    @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
     @Published var customRules: [CleanRule] { didSet { saveRules() } }
@@ -73,10 +74,11 @@ final class Prefs: ObservableObject {
         pitch = d.object(forKey: "pitch") as? Double ?? 0.0
         volume = d.object(forKey: "volume") as? Double ?? 1.0
         profile = Profile(rawValue: d.string(forKey: "profile") ?? "") ?? .general
-        captureMode = CaptureMode(rawValue: d.string(forKey: "captureMode") ?? "") ?? .auto
+        captureMode = CaptureMode(rawValue: d.string(forKey: "captureMode") ?? "") ?? .clipboard
         readSource = ReadSource(rawValue: d.string(forKey: "readSource") ?? "") ?? .selection
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
+        providerMode = d.string(forKey: "providerMode") ?? "auto"
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),

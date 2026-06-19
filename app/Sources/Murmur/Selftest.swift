@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// Headless validation of the pure logic (preprocessing). Run with `--selftest`.
 enum Selftest {
@@ -41,6 +42,16 @@ enum Selftest {
         let gen = Preprocess.clean("“hi”   there\n\n\n\nbye", options: Preprocess.options(for: .general), custom: [])
         check("normalize quotes", gen, contains: ["\"hi\""], absent: ["“"])
         check("collapse spaces", gen, contains: ["hi\" there"])
+
+        print("Clipboard — capture never permanently overwrites it")
+        let pb = NSPasteboard.general
+        let sentinel = "murmur-sentinel-\(UUID().uuidString)"
+        pb.clearContents(); pb.setString(sentinel, forType: .string)
+        // viaClipboard sends Cmd+C (no selection here), must restore sentinel.
+        _ = TextCapture.viaClipboard()
+        let after = pb.string(forType: .string) ?? ""
+        if after == sentinel { print("  ✓ clipboard restored") }
+        else { failures += 1; print("  ✗ clipboard NOT restored: got «\(after)»") }
 
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")
         exit(failures == 0 ? 0 : 1)

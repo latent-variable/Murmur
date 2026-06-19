@@ -50,12 +50,23 @@ bash scripts/run_backend.sh
 # build the app bundle and launch it
 bash scripts/build_app.sh && open dist/Murmur.app
 
-# preprocessing self-test — the only headless logic test, keep it green
+# Swift headless tests: preprocessing + clipboard-restore
 cd app && swift build && "$(swift build --show-bin-path)/Murmur" --selftest
+# Swift full-pipeline probe (clean -> stream) on any file, all profiles:
+"$(swift build --show-bin-path)/Murmur" --pipetest ../README.md
+
+# backend robustness suite (chunking, synth edges, long docs, providers, export)
+cd backend && "$HOME/Library/Application Support/Murmur/venv/bin/python" -m pytest tests/ -v
 
 # package a release DMG
 bash scripts/make_dmg.sh        # -> dist/Murmur-<version>.dmg
 ```
+
+The pytest suite (`backend/tests/test_tts.py`) is the robustness net: short /
+long (10x README ~44k chars) / huge-single-paragraph / unicode+emoji / code /
+URLs / punctuation-only / multi-voice / WAV export / provider load. Synthesis
+tests skip automatically if model files are absent. The full run is slow
+(~8 min) because every case actually synthesizes.
 
 What "validated" means here, in order of confidence:
 
@@ -96,6 +107,29 @@ gh release upload vX.Y.Z dist/Murmur-X.Y.Z.dmg --clobber
 
 App is ad-hoc signed, not notarized — first launch needs right-click ▸ Open.
 Note that in release notes until notarization lands.
+
+## Acceleration (measured, not assumed)
+
+Provider is selectable: `auto` | `cpu` | `coreml` (Settings ▸ Diagnostics ▸
+Acceleration, or `MURMUR_PROVIDER` env → `server.py --provider`). `/health`
+reports `active_providers` / `available_providers`.
+
+`auto` resolves to **CPU on purpose.** Kokoro is 82M params; benchmarked on
+Apple Silicon the CoreML EP (GPU/ANE) is ~even-to-slightly-slower than the
+vectorized CPU EP because most ops fall back to CPU and CoreML adds conversion
+overhead (CPU ~1.92s vs CoreML ~1.96s for a one-chunk synth). CPU is the right
+"accelerator" here. CoreML stays available as a toggle; CPU is always appended
+as the implicit fallback so a CoreML session failure never hard-fails. If you
+"enable the GPU," benchmark first — don't assume it's faster.
+
+## Capture (the reliability gotcha)
+
+Default capture mode is **clipboard**, not Accessibility — AX selected-text is
+inconsistent across apps. The clipboard path saves the pasteboard, sends ⌘C,
+and **only accepts text if `changeCount` actually advanced**, then restores the
+original clipboard. It must never return the pre-existing clipboard on a failed
+copy — that's what made Murmur "read text I didn't select." The
+clipboard-restore invariant is covered by `--selftest`; keep it green.
 
 ## Standing constraints
 

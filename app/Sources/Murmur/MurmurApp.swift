@@ -28,6 +28,11 @@ struct MurmurApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest") { Selftest.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "--pipetest") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let prof = CommandLine.arguments.count > i + 2 ? CommandLine.arguments[i + 2] : nil
+            CLITest.run(path: path, profileName: prof)
+        }
         NSApp.setActivationPolicy(.accessory) // menu-bar only
         AppState.shared.bootstrap()
     }

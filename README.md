@@ -48,6 +48,19 @@ cd app && swift build && "$(swift build --show-bin-path)/Murmur" --selftest
 
 Models live in `~/Library/Application Support/Murmur/models`. The venv lives in `~/Library/Application Support/Murmur/venv`.
 
+### Tests
+
+```bash
+# Swift: preprocessing + clipboard-restore invariant
+cd app && swift build && "$(swift build --show-bin-path)/Murmur" --selftest
+# Backend: chunking, synth edge cases, long docs, providers, WAV export
+cd backend && python -m pytest tests/ -v
+```
+
+### Acceleration
+
+Compute provider is selectable in **Settings ▸ Diagnostics ▸ Acceleration** (or `MURMUR_PROVIDER=auto|cpu|coreml`). `auto` uses **CPU on purpose**: Kokoro is small (82M), and the vectorized CPU path benchmarks as fast as or faster than CoreML (GPU/Neural Engine) on Apple Silicon — CoreML offloads most ops back to CPU anyway. CoreML is available as a toggle; CPU is always the fallback. `/health` reports the active provider.
+
 ## Models / voices
 
 Auto-downloaded on first run from the [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases). To do it manually:
@@ -69,17 +82,19 @@ No microphone, no network (after the one-time model download), no input monitori
 
 - Ad-hoc signed — first launch needs right-click ▸ Open (no notarization yet).
 - Pitch is a post-process shift (AVAudioUnitTimePitch); Kokoro has no native pitch control.
-- Accessibility selected-text capture varies by app; unreliable apps fall back to clipboard automatically (shown in Diagnostics).
+- Capture defaults to **clipboard** (most reliable). Accessibility selected-text is offered as a mode but varies by app. Capture never reads a stale clipboard, so a failed copy reads nothing rather than the wrong text.
 - Requires Python 3.12 available for the first-run venv build.
 
 ## Roadmap
 
-Shipped (v0.1.0):
+Shipped:
 
-- [x] Hotkey → local Kokoro speech, streaming playback.
-- [x] AX + clipboard capture, cleanup profiles + editable rules, WAV export.
-- [x] Menu-bar app, settings, diagnostics, model auto-download, launch-at-login.
-- [x] Drag-to-install DMG (`scripts/make_dmg.sh`) + GitHub release.
+- [x] Hotkey → local Kokoro speech, streaming playback (first audio ~0.2s).
+- [x] Clipboard + Accessibility capture, with stale-clipboard protection.
+- [x] Cleanup profiles + editable rules, WAV export, launch-at-login.
+- [x] Menu-bar app, settings, diagnostics, model auto-download.
+- [x] Drag-to-install DMG + GitHub release.
+- [x] Selectable compute provider (auto/CPU/CoreML) + backend test suite.
 
 Next:
 
@@ -87,7 +102,6 @@ Next:
 - [ ] Bundle a relocatable Python runtime (run on Macs without Python 3.12).
 - [ ] Per-app capture overrides and audio caching.
 - [ ] Floating draggable mini-player window.
-- [ ] CoreML execution provider toggle.
 - [ ] More export formats (MP3/AAC) and "save while reading".
 
 ## License

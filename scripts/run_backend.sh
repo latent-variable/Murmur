@@ -30,4 +30,5 @@ else
 fi
 
 export MURMUR_MODELS_DIR="$MODELS_DIR"
-exec python "$BACKEND/server.py" --port "$PORT" --models-dir "$MODELS_DIR" "$@"
+exec python "$BACKEND/server.py" --port "$PORT" --models-dir "$MODELS_DIR" \
+     --provider "${MURMUR_PROVIDER:-auto}" "$@"

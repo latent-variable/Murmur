@@ -62,7 +62,10 @@ enum TextCapture {
         return nil
     }
 
-    /// Clipboard fallback: save pasteboard, send Cmd+C, read, restore.
+    /// Clipboard fallback: save pasteboard, send Cmd+C, read the *fresh* copy,
+    /// restore the original. Returns nil if Cmd+C produced no new clipboard
+    /// content — critically, it never returns the pre-existing clipboard, so a
+    /// failed copy can't make Murmur read text the user didn't select.
     static func viaClipboard() -> String? {
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
@@ -70,17 +73,16 @@ enum TextCapture {
 
         sendCopy()
 
-        // Poll briefly for the clipboard to update.
-        var text: String?
-        let deadline = Date().addingTimeInterval(0.6)
+        // Wait for the pasteboard's changeCount to actually advance.
+        var changed = false
+        let deadline = Date().addingTimeInterval(0.8)
         while Date() < deadline {
-            if pb.changeCount != beforeCount {
-                text = pb.string(forType: .string)
-                break
-            }
-            usleep(20_000) // 20 ms
+            if pb.changeCount != beforeCount { changed = true; break }
+            usleep(15_000) // 15 ms
         }
-        if text == nil { text = pb.string(forType: .string) }
+
+        // Only trust a genuinely fresh copy. No change => no selection => nil.
+        let text = changed ? pb.string(forType: .string) : nil
 
         restore(pb, saved)
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
