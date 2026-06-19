@@ -141,6 +141,21 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Language-appropriate preview line so non-English voices phonemize
+    /// real text in their own language instead of mangled English.
+    static func sampleText(for voice: String) -> String {
+        switch voice.prefix(2) {
+        case "ef", "em": return "Hola, esta es una prueba de la voz."
+        case "ff":       return "Bonjour, ceci est un test de la voix."
+        case "hf", "hm": return "नमस्ते, यह आवाज़ का एक परीक्षण है।"
+        case "if", "im": return "Ciao, questa è una prova della voce."
+        case "jf", "jm": return "こんにちは、これは音声のテストです。"
+        case "pf", "pm": return "Olá, este é um teste da voz."
+        case "zf", "zm": return "你好，这是语音测试。"
+        default:         return "This is a preview of the selected voice."
+        }
+    }
+
     func cleanedText(_ raw: String) -> String {
         Preprocess.clean(raw, options: Preprocess.options(for: prefs.profile), custom: prefs.customRules)
     }
@@ -165,7 +180,7 @@ final class AppState: ObservableObject {
             let gen = generation
             status = .reading
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
-            let sample = "This is the \(prefs.voice) voice, reading at the current settings."
+            let sample = Self.sampleText(for: prefs.voice)
             try? await backend.client.streamPCM(text: sample, voice: prefs.voice, speed: prefs.speed) { [weak self] d in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(d)

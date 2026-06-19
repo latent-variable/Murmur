@@ -42,12 +42,12 @@ LANG_BY_PREFIX = {
     "if": "it", "im": "it",
     "jf": "ja", "jm": "ja",
     "pf": "pt-br", "pm": "pt-br",
-    "zf": "zh", "zm": "zh",
+    "zf": "cmn", "zm": "cmn",   # espeak uses "cmn" (Mandarin), not "zh"
 }
 LANG_LABEL = {
     "en-us": "English (US)", "en-gb": "English (UK)", "es": "Spanish",
     "fr-fr": "French", "hi": "Hindi", "it": "Italian", "ja": "Japanese",
-    "pt-br": "Portuguese (BR)", "zh": "Chinese",
+    "pt-br": "Portuguese (BR)", "cmn": "Chinese (Mandarin)",
 }
 
 

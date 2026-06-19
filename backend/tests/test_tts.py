@@ -103,6 +103,21 @@ class TestSynth:
     def test_multiple_voices(self, engine, voice):
         assert len(self.synth(engine, "Testing this voice.", voice=voice)) > 0
 
+    # Each non-English voice family must phonemize its own language. Regression
+    # guard for the zh->cmn espeak code fix.
+    @pytest.mark.parametrize("voice,text", [
+        ("ef_dora", "Hola, esto es una prueba."),
+        ("ff_siwis", "Bonjour, ceci est un test."),
+        ("hf_alpha", "नमस्ते, यह एक परीक्षण है।"),
+        ("if_sara", "Ciao, questo è un test."),
+        ("jf_alpha", "こんにちは、テストです。"),
+        ("pf_dora", "Olá, isto é um teste."),
+        ("zf_xiaobei", "你好，这是测试。"),
+        ("zm_yunjian", "你好，世界。"),
+    ])
+    def test_all_languages(self, engine, voice, text):
+        assert len(self.synth(engine, text, voice=voice)) > 0, f"{voice} produced no audio"
+
 
 # ── long-document streaming + latency (uses the chunk loop) ─────────────────
 @needs_model
