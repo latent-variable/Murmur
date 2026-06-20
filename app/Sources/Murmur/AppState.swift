@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
     let hotkey = HotKeyManager()
 
     private var generation = 0   // cancels stale streams
+    private var playingText = "" // text currently being read (for the smart toggle)
 
     private init() {
         hotkey.onFire = { [weak self] in self?.triggerRead() }
@@ -76,17 +77,16 @@ final class AppState: ObservableObject {
 
     // MARK: - read pipeline
 
-    func triggerRead() {
-        if status == .reading || status == .paused {
-            if prefs.stopOnNewTrigger { stop() } else { return }
-        }
-        Task { await runRead() }
-    }
+    func triggerRead() { Task { await runRead() } }
 
     private func runRead() async {
+        let wasPlaying = (status == .reading || status == .paused)
+        // Honor the "ignore re-trigger" preference if the user turned it off.
+        if wasPlaying && !prefs.stopOnNewTrigger { return }
+
         generation += 1
         let gen = generation
-        status = .capturing
+        if !wasPlaying { status = .capturing }
 
         let capture: Capture
         if prefs.readSource == .clipboard {
@@ -99,8 +99,23 @@ final class AppState: ObservableObject {
         lastMethod = capture.method
 
         let cleaned = cleanedText(capture.text)
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Smart toggle: pressing the shortcut while audio is playing either
+        // switches to freshly-selected text, or — if nothing new is selected —
+        // just stops. No need to reach for the Stop button.
+        if wasPlaying {
+            if trimmed.isEmpty || cleaned == playingText {
+                Log.write("trigger while playing, no new text -> stop")
+                stop()
+                return
+            }
+            Log.write("trigger while playing, new text -> switch")
+            audio.stop()   // generation already advanced; old stream is now stale
+        }
+
         lastCleaned = cleaned
-        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !trimmed.isEmpty else {
             // Distinguish "nothing selected" from "can't capture because no permission".
             if prefs.readSource == .selection && !Permissions.axTrusted {
                 Log.write("read aborted: no capture and Accessibility not granted")
@@ -123,6 +138,7 @@ final class AppState: ObservableObject {
             }
         }
 
+        playingText = cleaned
         status = .reading
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
         do {
@@ -135,7 +151,7 @@ final class AppState: ObservableObject {
             while gen == generation && audio.hasQueued && status == .reading {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
-            if gen == generation && status == .reading { status = .idle }
+            if gen == generation && status == .reading { status = .idle; playingText = "" }
         } catch {
             if gen == generation { status = .error(error.localizedDescription); resetToIdle(after: 3) }
         }
@@ -169,6 +185,7 @@ final class AppState: ObservableObject {
     func stop() {
         generation += 1
         audio.stop()
+        playingText = ""
         status = .idle
     }
 
