@@ -325,7 +325,9 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
     segments = segment_text(req.text)
     if not segments:
         raise HTTPException(400, "no speakable text")
-    scale = max(0.0, req.pause_scale)
+    # Couple pauses to speed: faster speech -> proportionally shorter gaps, so
+    # cadence stays natural at any speed. pause_scale is the user's multiplier.
+    scale = max(0.0, req.pause_scale) / max(0.25, req.speed)
 
     def silence(seconds: float) -> np.ndarray:
         n = int(SAMPLE_RATE * seconds * scale)

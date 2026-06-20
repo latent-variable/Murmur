@@ -76,6 +76,8 @@ cd backend && python -m pytest tests/ -v
 
 Compute provider is selectable in **Settings ▸ Diagnostics ▸ Acceleration** (or `MURMUR_PROVIDER=auto|cpu|coreml`). `auto` uses **CPU on purpose**: Kokoro is small (82M), and the vectorized CPU path benchmarks as fast as or faster than CoreML (GPU/Neural Engine) on Apple Silicon — CoreML offloads most ops back to CPU anyway. CoreML is available as a toggle; CPU is always the fallback. `/health` reports the active provider.
 
+Why Kokoro, and what could replace it: [docs/MODELS.md](docs/MODELS.md) tracks candidate models against Murmur's CPU-only / ONNX / permissive-license constraints.
+
 ## Models / voices
 
 Auto-downloaded on first run from the [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases). To do it manually:
