@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum Status: Equatable {
@@ -50,10 +51,18 @@ final class AppState: ObservableObject {
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
+    private var cancellables = Set<AnyCancellable>()
 
     private init() {
         hotkey.onFire = { [weak self] in self?.triggerRead() }
         audio.onFinished = { [weak self] in self?.finishIfDone() }
+        // Live transport: dragging speed/pitch/volume affects audio immediately,
+        // including whatever is currently streaming.
+        prefs.$speed.sink { [weak self] in self?.audio.setRate(Float($0)) }.store(in: &cancellables)
+        prefs.$pitch.sink { [weak self] in self?.audio.set(volume: Float(self?.prefs.volume ?? 1),
+                                                           pitchCents: Float($0)) }.store(in: &cancellables)
+        prefs.$volume.sink { [weak self] in self?.audio.set(volume: Float($0),
+                                                            pitchCents: Float(self?.prefs.pitch ?? 0)) }.store(in: &cancellables)
     }
 
     func bootstrap() {
@@ -146,10 +155,12 @@ final class AppState: ObservableObject {
 
         playingText = cleaned
         status = .reading
-        audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
+        audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
         do {
+            // Speed is applied at playback (real-time, both engines), so the
+            // backend synthesizes at 1.0 and pauses stretch along with it.
             try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
-                                                speed: prefs.speed, pauseScale: prefs.pauseScale,
+                                                speed: 1.0, pauseScale: prefs.pauseScale,
                                                 engine: prefs.engine) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(data)
@@ -203,11 +214,11 @@ final class AppState: ObservableObject {
             generation += 1
             let gen = generation
             status = .reading
-            audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
+            audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
                 : Self.sampleText(for: prefs.voice)
-            try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: prefs.speed,
+            try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
                                                 pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(d)

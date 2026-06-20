@@ -26,10 +26,17 @@ final class AudioPlayer {
         pitchUnit.pitch = pitchCents   // -2400...2400
     }
 
+    /// Playback speed via time-stretch (pitch preserved). Safe to change live,
+    /// even mid-playback — takes effect on the audio currently streaming.
+    func setRate(_ rate: Float) {
+        pitchUnit.rate = max(0.25, min(4.0, rate))
+    }
+
     /// Begin a fresh playback session.
-    func start(volume: Float, pitchCents: Float) {
+    func start(volume: Float, pitchCents: Float, rate: Float) {
         stop()
         set(volume: volume, pitchCents: pitchCents)
+        setRate(rate)
         do {
             if !engine.isRunning { try engine.start() }
             player.play()
