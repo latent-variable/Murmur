@@ -29,6 +29,14 @@ if [ ! -f "$ROOT/app/Resources/AppIcon.icns" ] || \
 fi
 cp "$ROOT/app/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+# Bundle the openly-licensed HD starter voices (CMU ARCTIC) so every install
+# has them out of the box; the app seeds them into Application Support on first
+# run. Personal clones are NOT here (no redistribution rights).
+if [ -d "$ROOT/app/Resources/hd-voices" ]; then
+  mkdir -p "$APP/Contents/Resources/hd-voices"
+  cp "$ROOT/app/Resources/hd-voices/"*.wav "$APP/Contents/Resources/hd-voices/" 2>/dev/null || true
+fi
+
 # Bundle backend sources + launcher so a packaged app can run self-contained.
 # Copy every .py + requirements so new modules (e.g. chatterbox_engine) ship too.
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"

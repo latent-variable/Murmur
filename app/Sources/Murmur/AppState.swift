@@ -88,7 +88,22 @@ final class AppState: ObservableObject {
                                                             pitchCents: Float(self?.prefs.pitch ?? 0)) }.store(in: &cancellables)
     }
 
+    /// On first run, copy the bundled open starter voices into the writable
+    /// hd-voices dir so HD has voices out of the box. Never overwrites existing.
+    private func seedStarterVoices() {
+        let fm = FileManager.default
+        let existing = (try? fm.contentsOfDirectory(at: hdVoicesDir, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "wav" }) ?? []
+        guard existing.isEmpty,
+              let bundled = Bundle.main.resourceURL?.appending(path: "hd-voices"),
+              let clips = try? fm.contentsOfDirectory(at: bundled, includingPropertiesForKeys: nil) else { return }
+        for clip in clips where clip.pathExtension == "wav" {
+            try? fm.copyItem(at: clip, to: hdVoicesDir.appending(path: clip.lastPathComponent))
+        }
+    }
+
     func bootstrap() {
+        seedStarterVoices()
         hotkey.register(prefs.hotKey)
         Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue)")
         // Selection capture needs Accessibility. Prompt up front so the user
