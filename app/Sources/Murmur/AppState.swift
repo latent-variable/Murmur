@@ -37,6 +37,11 @@ final class AppState: ObservableObject {
     @Published var lastMethod: Capture.Method = .none
     @Published var modelsPresent = false
     @Published var axTrusted = Permissions.axTrusted
+    @Published var hdVoices: [VoiceInfo] = []
+    @Published var hdInstalled = false
+
+    /// The voice id for the currently selected engine.
+    var activeVoice: String { prefs.engine == "chatterbox" ? prefs.hdVoice : prefs.voice }
 
     let prefs = Prefs.shared
     let backend = BackendManager()
@@ -69,6 +74,7 @@ final class AppState: ObservableObject {
             let health = await backend.client.health()
             modelsPresent = backend.ready || (health?.files_present ?? false)
             voices = await backend.client.voices()
+            refreshHD()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
         }
     }
@@ -142,8 +148,9 @@ final class AppState: ObservableObject {
         status = .reading
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
         do {
-            try await backend.client.streamPCM(text: cleaned, voice: prefs.voice,
-                                                speed: prefs.speed, pauseScale: prefs.pauseScale) { [weak self] data in
+            try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
+                                                speed: prefs.speed, pauseScale: prefs.pauseScale,
+                                                engine: prefs.engine) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(data)
             }
@@ -197,8 +204,11 @@ final class AppState: ObservableObject {
             let gen = generation
             status = .reading
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
-            let sample = Self.sampleText(for: prefs.voice)
-            try? await backend.client.streamPCM(text: sample, voice: prefs.voice, speed: prefs.speed) { [weak self] d in
+            let sample = prefs.engine == "chatterbox"
+                ? "This is a preview of the selected high definition voice."
+                : Self.sampleText(for: prefs.voice)
+            try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: prefs.speed,
+                                                pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(d)
             }
@@ -207,11 +217,69 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - HD engine (Chatterbox)
+
+    var hdVoicesDir: URL {
+        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Murmur/hd-voices")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    func refreshHD() {
+        Task {
+            let e = await backend.client.engines()
+            hdInstalled = e.chatterbox?.installed ?? false
+            hdVoices = await backend.client.voices(engine: "chatterbox")
+            if prefs.hdVoice.isEmpty, let first = hdVoices.first { prefs.hdVoice = first.id }
+        }
+    }
+
+    /// Install HD deps (streams progress), then restart the backend into the
+    /// combined env so both engines are live.
+    func installHD(onLine: @escaping (String) -> Void) {
+        Task {
+            do {
+                try await backend.client.installChatterbox { line in
+                    Task { @MainActor in onLine(line) }
+                }
+            } catch {
+                onLine("install error: \(error.localizedDescription)")
+            }
+            onLine("restarting engine…")
+            await backend.restart()
+            refreshHD()
+            onLine("HD ready: \(hdInstalled)")
+        }
+    }
+
+    /// Import an audio file as a Chatterbox reference voice (converted to a
+    /// mono 24 kHz WAV, trimmed to ~20s).
+    func addHDVoice(from src: URL, name: String) {
+        let safe = name.replacingOccurrences(of: "/", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+        guard !safe.isEmpty else { return }
+        let dest = hdVoicesDir.appending(path: "\(safe).wav")
+        do {
+            try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)
+            refreshHD()
+            prefs.hdVoice = safe
+        } catch {
+            status = .error("Voice import failed")
+        }
+    }
+
+    func deleteHDVoice(_ id: String) {
+        try? FileManager.default.removeItem(at: hdVoicesDir.appending(path: "\(id).wav"))
+        refreshHD()
+    }
+
     func exportWAV() {
         let text = lastCleaned.isEmpty ? cleanedText(lastCaptured) : lastCleaned
         guard !text.isEmpty else { return }
         Task {
-            guard let data = try? await backend.client.wav(text: text, voice: prefs.voice, speed: prefs.speed, pauseScale: prefs.pauseScale) else {
+            guard let data = try? await backend.client.wav(text: text, voice: activeVoice, speed: prefs.speed,
+                                                           pauseScale: prefs.pauseScale, engine: prefs.engine) else {
                 status = .error("Export failed"); return
             }
             let panel = NSSavePanel()

@@ -79,6 +79,12 @@ final class BackendManager: ObservableObject {
         env["MURMUR_MODELS_DIR"] = modelsDir.path
         env["MURMUR_PORT"] = String(port)
         env["MURMUR_PROVIDER"] = Prefs.shared.providerMode
+        // If the HD engine is installed, run in the combined env (numpy 1.26 +
+        // torch + kokoro) so one process serves both engines.
+        let hd = modelsDir.deletingLastPathComponent().appending(path: "hd-packages")
+        if FileManager.default.fileExists(atPath: hd.appending(path: "torch").path) {
+            env["PYTHONPATH"] = hd.path + (env["PYTHONPATH"].map { ":" + $0 } ?? "")
+        }
 
         if let py = bundledPython, let root = repoRoot() {
             // Preferred: run the bundled runtime directly — no system Python.
@@ -127,5 +133,13 @@ final class BackendManager: ObservableObject {
     func stop() {
         process?.terminate()
         process = nil
+    }
+
+    /// Restart the backend (e.g. after installing HD deps, to load the new env).
+    func restart() async {
+        stop()
+        ready = false
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        await start()
     }
 }

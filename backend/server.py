@@ -318,6 +318,50 @@ def engines():
     return engines_status()
 
 
+@app.post("/engines/chatterbox/install")
+def install_chatterbox():
+    """Install the heavy HD deps into app-support hd-packages (not the bundle).
+    Streams pip output so the app can show progress. ~2-3 GB, one time."""
+    import subprocess
+    from chatterbox_engine import hd_packages_dir
+    target = hd_packages_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    req_file = Path(__file__).parent / "requirements-chatterbox.txt"
+    pip = [sys.executable, "-m", "pip", "install", "--target", str(target)]
+    # 1) HD deps (numpy<2). 2) kokoro into the SAME env without disturbing numpy,
+    # so one process can serve both engines.
+    steps = [
+        pip + ["--upgrade", "-r", str(req_file)],
+        pip + ["--no-deps", "--upgrade", "kokoro-onnx", "onnxruntime"],
+    ]
+
+    def gen() -> Iterator[bytes]:
+        yield f"installing HD engine into {target}\n".encode()
+        try:
+            import importlib.util
+            if importlib.util.find_spec("pip") is None:
+                subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"],
+                               capture_output=True)
+        except Exception:  # noqa: BLE001
+            pass
+        rc = 0
+        for cmd in steps:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                yield line.encode()
+            proc.wait()
+            rc = proc.returncode
+            if rc != 0:
+                break
+        ok = rc == 0 and cb_engine.available()
+        yield f"\n[{'done' if ok else 'failed'}] exit={rc} installed={cb_engine.available()}\n".encode()
+        yield b"\n[note] restart the engine to activate HD (the app does this for you).\n"
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
 @app.get("/voices")
 def voices(engine_name: str = Query("kokoro", alias="engine")):
     if engine_name == "chatterbox":

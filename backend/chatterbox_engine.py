@@ -33,6 +33,33 @@ def _ensure_path() -> None:
         sys.path.insert(0, p)
 
 
+_mps_patched = False
+
+
+def _patch_mps_float64(torch) -> None:
+    """Apple's Metal backend has no float64. Chatterbox's reference-audio
+    preprocessing moves float64 tensors to the GPU and crashes. Globally
+    downcast float64 -> float32 on any move to mps. (Bounded to this HD process.)"""
+    global _mps_patched
+    if _mps_patched:
+        return
+    _orig_to = torch.Tensor.to
+
+    def _safe_to(self, *a, **k):
+        dev = k.get("device")
+        if dev is None:
+            for x in a:
+                if isinstance(x, (str, torch.device)) and "mps" in str(x):
+                    dev = x
+                    break
+        if dev is not None and "mps" in str(dev) and self.dtype == torch.float64:
+            self = _orig_to(self, torch.float32)
+        return _orig_to(self, *a, **k)
+
+    torch.Tensor.to = _safe_to
+    _mps_patched = True
+
+
 class ChatterboxTurboEngine:
     name = "chatterbox"
     label = "Chatterbox Turbo (HD)"
@@ -81,17 +108,31 @@ class ChatterboxTurboEngine:
             _ensure_path()
             import torch
             self._install_watermarker()
-            from chatterbox.tts_turbo import ChatterboxTurboTTS
             self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+            if self.device == "mps":
+                _patch_mps_float64(torch)  # Metal has no float64; downcast on ->mps
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
             log.info("loading Chatterbox Turbo on %s", self.device)
             self.model = ChatterboxTurboTTS.from_pretrained(device=self.device)
             self.error = None
+            self._warmup()
             log.info("Chatterbox Turbo ready (%s)", self.device)
             return True
         except Exception as e:  # noqa: BLE001
             self.error = str(e)
             log.exception("failed to load Chatterbox Turbo")
             return False
+
+    def _warmup(self) -> None:
+        """First generate compiles the graph (~8s). Warm it with any reference
+        clip so the user's first real request is fast (~RTF 0.7)."""
+        try:
+            refs = sorted((Path.home() / "Library/Application Support/Murmur/hd-voices").glob("*.wav"))
+            if not refs or self.model is None:
+                return
+            self.model.generate("Ready.", audio_prompt_path=str(refs[0]))
+        except Exception:  # noqa: BLE001
+            pass
 
     def synth(self, text: str, ref_path: str, speed: float = 1.0) -> np.ndarray:
         """Clone the voice in ref_path and speak `text`. Returns float32 @ 24kHz.

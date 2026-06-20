@@ -30,12 +30,19 @@ struct MenuContent: View {
             Divider()
 
             HStack(spacing: 10) {
-                VoiceMenuButton(voices: state.voices, selection: $prefs.voice)
+                if prefs.engine == "chatterbox" {
+                    VoiceMenuButton(voices: state.hdVoices, selection: $prefs.hdVoice)
+                } else {
+                    VoiceMenuButton(voices: state.voices, selection: $prefs.voice)
+                }
                 Button { state.testVoice() } label: {
                     Image(systemName: "speaker.wave.2.fill")
                 }
                 .buttonStyle(.borderless)
                 .help("Test voice")
+            }
+            if prefs.engine == "chatterbox" {
+                Text("HD engine").font(.caption2).foregroundStyle(.tint)
             }
 
             VStack(spacing: 4) {

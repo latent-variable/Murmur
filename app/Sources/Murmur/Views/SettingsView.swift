@@ -6,6 +6,7 @@ struct SettingsView: View {
         TabView {
             GeneralTab().tabItem { Label("General", systemImage: "gearshape") }
             VoiceTab().tabItem { Label("Voice & Audio", systemImage: "waveform") }
+            EngineTab().tabItem { Label("Engine", systemImage: "cpu") }
             CaptureTab().tabItem { Label("Capture", systemImage: "text.viewfinder") }
             CleanupTab().tabItem { Label("Cleanup", systemImage: "wand.and.stars") }
             ShortcutTab().tabItem { Label("Shortcut", systemImage: "command") }
@@ -76,6 +77,95 @@ private struct VoiceTab: View {
             Slider(value: value, in: range)
             Text(String(format: fmt, value.wrappedValue * scale))
                 .font(.caption.monospacedDigit()).frame(width: 56, alignment: .trailing)
+        }
+    }
+}
+
+// MARK: - Engine (Kokoro / Chatterbox HD)
+
+private struct EngineTab: View {
+    @EnvironmentObject var state: AppState
+    @EnvironmentObject var prefs: Prefs
+    @State private var installing = false
+    @State private var installLog = ""
+    @State private var showImporter = false
+    @State private var newName = ""
+
+    var body: some View {
+        Form {
+            Section("Voice engine") {
+                Picker("Engine", selection: $prefs.engine) {
+                    Text("Kokoro — instant, 54 voices").tag("kokoro")
+                    Text("Chatterbox HD — higher quality, cloned voices").tag("chatterbox")
+                }
+                .pickerStyle(.radioGroup)
+                Text("Kokoro runs on CPU and starts instantly. Chatterbox HD uses the GPU for noticeably more natural speech, with a few seconds of startup. Switch any time.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            if prefs.engine == "chatterbox" {
+                if !state.hdInstalled {
+                    Section("Enable HD") {
+                        Text("HD mode downloads its engine (~1.3 GB, one time) into Application Support — it is not bundled, so the app stays small.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if installing {
+                            ProgressView().controlSize(.small)
+                            ScrollView { Text(installLog).font(.caption.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading) }
+                                .frame(height: 120).border(.quaternary)
+                        } else {
+                            Button("Download & enable HD") { startInstall() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                } else {
+                    Section("HD voices (cloned)") {
+                        if state.hdVoices.isEmpty {
+                            Text("No reference voices yet. Add a 10-20s clean audio clip of any voice you have the rights to use.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Picker("Voice", selection: $prefs.hdVoice) {
+                            ForEach(state.hdVoices) { v in Text(v.id).tag(v.id) }
+                            if state.hdVoices.isEmpty { Text("—").tag("") }
+                        }
+                        HStack {
+                            TextField("New voice name", text: $newName).frame(width: 160)
+                            Button("Add reference clip…") { showImporter = true }
+                                .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                            Spacer()
+                            Button("Test voice") { state.testVoice() }
+                        }
+                        if !prefs.hdVoice.isEmpty {
+                            Button(role: .destructive) { state.deleteHDVoice(prefs.hdVoice) } label: {
+                                Label("Delete \"\(prefs.hdVoice)\"", systemImage: "trash")
+                            }.controlSize(.small)
+                        }
+                    }
+                    Section {
+                        Label("HD audio is watermarked (Resemble Perth) to mark it as AI-generated. Only clone voices you have permission to use.",
+                              systemImage: "checkmark.shield")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { state.refreshHD() }
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio]) { result in
+            if case .success(let url) = result {
+                let ok = url.startAccessingSecurityScopedResource()
+                state.addHDVoice(from: url, name: newName)
+                if ok { url.stopAccessingSecurityScopedResource() }
+                newName = ""
+            }
+        }
+    }
+
+    private func startInstall() {
+        installing = true; installLog = ""
+        state.installHD { line in
+            installLog += line + "\n"
+            if line.contains("HD ready") { installing = false }
         }
     }
 }

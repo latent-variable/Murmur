@@ -30,11 +30,9 @@ fi
 cp "$ROOT/app/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Bundle backend sources + launcher so a packaged app can run self-contained.
-cp -R "$ROOT/backend/server.py" "$ROOT/backend/download_models.py" \
-      "$ROOT/backend/requirements.txt" "$APP/Contents/Resources/repo/" 2>/dev/null || true
+# Copy every .py + requirements so new modules (e.g. chatterbox_engine) ship too.
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"
-cp "$ROOT/backend/server.py" "$ROOT/backend/download_models.py" \
-   "$ROOT/backend/requirements.txt" "$APP/Contents/Resources/repo/backend/"
+cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resources/repo/backend/"
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 

@@ -2,6 +2,7 @@
 # default install — fetched on demand into ~/Library/Application Support/Murmur/
 # hd-packages when the user enables HD mode. Kept separate so the default Kokoro
 # app stays light.
+numpy>=1.26,<2        # chatterbox deps pin <2; kokoro-onnx runs fine on it too
 torch>=2.0
 torchaudio>=2.0
 chatterbox-tts>=0.1.7

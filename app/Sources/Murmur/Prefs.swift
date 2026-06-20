@@ -53,7 +53,9 @@ final class Prefs: ObservableObject {
     static let shared = Prefs()
     private let d = UserDefaults.standard
 
+    @Published var engine: String { didSet { d.set(engine, forKey: "engine") } }   // "kokoro" | "chatterbox"
     @Published var voice: String { didSet { d.set(voice, forKey: "voice") } }
+    @Published var hdVoice: String { didSet { d.set(hdVoice, forKey: "hdVoice") } } // chatterbox reference id
     @Published var speed: Double { didSet { d.set(speed, forKey: "speed") } }
     @Published var pitch: Double { didSet { d.set(pitch, forKey: "pitch") } }    // cents
     @Published var volume: Double { didSet { d.set(volume, forKey: "volume") } }
@@ -70,7 +72,9 @@ final class Prefs: ObservableObject {
     @Published var hotKey: HotKeyCombo { didSet { saveHotKey() } }
 
     private init() {
+        engine = d.string(forKey: "engine") ?? "kokoro"
         voice = d.string(forKey: "voice") ?? "am_puck"
+        hdVoice = d.string(forKey: "hdVoice") ?? ""
         speed = d.object(forKey: "speed") as? Double ?? 1.0
         pitch = d.object(forKey: "pitch") as? Double ?? 0.0
         volume = d.object(forKey: "volume") as? Double ?? 1.0
