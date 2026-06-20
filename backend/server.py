@@ -201,7 +201,8 @@ def _split_long_for_hd(text: str, gap: float) -> list[tuple[str, float]]:
         else:
             line = cand
         if line.endswith((",", ";", ":")) and len(line) >= HD_MAX_CHARS * 0.6:
-            pieces.append(line); line = ""   # clean break at a clause boundary
+            pieces.append(line)   # clean break at a clause boundary
+            line = ""
     if line:
         pieces.append(line)
     return [(p, gap if i == len(pieces) - 1 else 0.0) for i, p in enumerate(pieces)]

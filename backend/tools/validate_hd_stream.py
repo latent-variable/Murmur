@@ -7,7 +7,8 @@ to confirm: fast first audio + no buffer underrun (gaps).
   PYTHONPATH="$HOME/Library/Application Support/Murmur/hd-packages" \
     python3 backend/tools/validate_hd_stream.py
 """
-import sys, time
+import sys
+import time
 from pathlib import Path
 
 HD = Path.home() / "Library/Application Support/Murmur/hd-packages"

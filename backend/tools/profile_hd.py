@@ -28,7 +28,8 @@ def _safe_to(self, *a, **k):
     if dev is None:
         for x in a:
             if isinstance(x, (str, torch.device)) and "mps" in str(x):
-                dev = x; break
+                dev = x
+                break
     if dev is not None and "mps" in str(dev) and self.dtype == torch.float64:
         self = _orig_to(self, torch.float32)
     return _orig_to(self, *a, **k)
@@ -62,16 +63,20 @@ def mps_sync():
 def stage_timed(text):
     """Mirror generate() but time each stage."""
     t = {}
-    s = time.time(); text = punc_norm(text)
+    s = time.time()
+    text = punc_norm(text)
     tok = m.tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-    tok = tok.input_ids.to(m.device); mps_sync(); t["tokenize"] = time.time()-s
+    tok = tok.input_ids.to(m.device)
+    mps_sync()
+    t["tokenize"] = time.time() - s
 
     s = time.time()
     speech_tokens = m.t3.inference_turbo(
         t3_cond=m.conds.t3, text_tokens=tok,
         temperature=0.8, top_k=1000, top_p=0.95, repetition_penalty=1.2,
     )
-    mps_sync(); t["ar_decode"] = time.time()-s
+    mps_sync()
+    t["ar_decode"] = time.time() - s
     n_tok = int(speech_tokens.shape[-1])
 
     speech_tokens = speech_tokens[speech_tokens < 6561].to(m.device)
@@ -80,10 +85,13 @@ def stage_timed(text):
 
     s = time.time()
     wav, _ = m.s3gen.inference(speech_tokens=speech_tokens, ref_dict=m.conds.gen, n_cfm_timesteps=2)
-    mps_sync(); t["vocode"] = time.time()-s
+    mps_sync()
+    t["vocode"] = time.time() - s
     wav = wav.squeeze(0).detach().cpu().numpy()
 
-    s = time.time(); m.watermarker.apply_watermark(wav, sample_rate=m.sr); t["watermark"] = time.time()-s
+    s = time.time()
+    m.watermarker.apply_watermark(wav, sample_rate=m.sr)
+    t["watermark"] = time.time() - s
 
     audio_s = len(wav)/m.sr
     return t, n_tok, audio_s

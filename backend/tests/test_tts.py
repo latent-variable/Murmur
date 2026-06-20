@@ -98,7 +98,7 @@ class TestHDChunking:
 
     @staticmethod
     def _timeline(text):
-        from server import merge_for_hd, HD_CHARS_PER_SEC, HD_MAX_CHARS
+        from server import merge_for_hd, HD_CHARS_PER_SEC
         chunks = merge_for_hd(segment_text(text))
         t = play_start = buf_end = 0.0
         first_audio = None
@@ -133,7 +133,6 @@ class TestHDChunking:
     @pytest.mark.parametrize("name", list(SAMPLES))
     def test_no_underrun_and_fast_start(self, name):
         first_audio, min_slack, max_chars, n = self._timeline(self.SAMPLES[name])
-        from server import HD_MAX_CHARS
         assert min_slack >= 0, f"{name}: buffer underruns by {-min_slack:.2f}s"
         assert first_audio <= 3.2, f"{name}: first audio too slow ({first_audio:.2f}s)"
         # no single sentence chunk blows the per-chunk budget (merged multi-

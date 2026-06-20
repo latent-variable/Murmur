@@ -59,13 +59,11 @@ final class AudioPlayer {
     /// Begin a fresh playback session. `cushionSeconds` of audio is buffered
     /// before playback starts (larger for slower engines = smoother streaming).
     func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) {
-        stop()
+        stop()   // resets all state + bumps epoch under the lock
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
         lock.withLock {
             primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
-            primed = false; ended = false; leftoverByte = nil; scheduledFrames = 0
-            epoch &+= 1
         }
         do {
             if !engine.isRunning { try engine.start() }
@@ -80,7 +78,10 @@ final class AudioPlayer {
     func flush() {
         lock.withLock {
             ended = true
-            if !paused && !primed && scheduledFrames > 0 { primed = true; player.play() }
+            if !paused && !primed && scheduledFrames > 0 {
+                primed = true
+                player.play()
+            }
         }
     }
 
@@ -88,8 +89,14 @@ final class AudioPlayer {
     func feed(_ data: Data) {
         var bytes = data
         let myEpoch: UInt64 = lock.withLock {
-            if let lo = leftoverByte { bytes.insert(lo, at: 0); leftoverByte = nil }
-            if bytes.count % 2 == 1 { leftoverByte = bytes.last; bytes.removeLast() }
+            if let lo = leftoverByte {
+                bytes.insert(lo, at: 0)
+                leftoverByte = nil
+            }
+            if bytes.count % 2 == 1 {
+                leftoverByte = bytes.last
+                bytes.removeLast()
+            }
             return epoch
         }
         guard !bytes.isEmpty else { return }
@@ -105,41 +112,51 @@ final class AudioPlayer {
             }
         }
         let frames = buffer.frameLength
+        // All node access (schedule + play) happens under the lock, so it's
+        // mutually exclusive with stop()/pause() — they can't interleave with a
+        // teardown. The epoch guard drops a buffer if stop() ran while we built
+        // it, so nothing is scheduled onto a reset node.
         lock.withLock {
+            guard myEpoch == epoch else { return }
             scheduledFrames += frames
-            // Start once the cushion is full; after that, keep the node playing —
-            // unless paused, in which case keep buffering but stay stopped. Done
-            // under the lock so a concurrent pause() can't be lost.
+            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                guard let self else { return }
+                self.lock.withLock {
+                    guard myEpoch == self.epoch else { return }
+                    self.scheduledFrames = self.scheduledFrames >= frames ? self.scheduledFrames - frames : 0
+                }
+            }
+            // Start once the cushion is full; after that keep the node playing —
+            // unless paused, in which case keep buffering but stay stopped.
             if !paused {
                 if !primed {
-                    if scheduledFrames >= primeFrames { primed = true; player.play() }
+                    if scheduledFrames >= primeFrames {
+                        primed = true
+                        player.play()
+                    }
                 } else if !player.isPlaying {
                     player.play()
                 }
             }
         }
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            guard let self else { return }
-            self.lock.withLock {
-                // ignore completions from a previous session; clamp so the
-                // unsigned counter can never underflow
-                guard myEpoch == self.epoch else { return }
-                self.scheduledFrames = self.scheduledFrames >= frames ? self.scheduledFrames - frames : 0
-            }
-        }
     }
 
     func pause() {
-        lock.withLock { paused = true; player.pause() }
+        lock.withLock {
+            paused = true
+            player.pause()
+        }
     }
+
     func resume() {
         if !engine.isRunning { try? engine.start() }
         lock.withLock {
             paused = false
             if primed {
-                player.play()                                 // was playing before pause
+                player.play()                       // was playing before pause
             } else if ended && scheduledFrames > 0 {
-                primed = true; player.play()                  // stream done: play remainder
+                primed = true                       // stream done: play remainder
+                player.play()
             }
             // else paused mid-prime, stream still live: leave unprimed so feed()
             // refills the cushion before starting — avoids an undersized buffer.
@@ -147,13 +164,22 @@ final class AudioPlayer {
     }
 
     func stop() {
+        // Bump the epoch and reset state UNDER the lock first: that's what gates
+        // feed() (it checks `myEpoch == epoch` under the lock before it touches
+        // the node), so once this returns, no in-flight feed will schedule onto
+        // the node we're about to tear down. The node calls themselves stay
+        // outside the lock so a completion handler delivered during reset() can't
+        // deadlock by re-entering the (non-recursive) lock.
+        lock.withLock {
+            epoch &+= 1
+            primed = false
+            paused = false
+            ended = false
+            scheduledFrames = 0
+            leftoverByte = nil
+        }
         player.stop()
         player.reset()
-        lock.withLock {
-            primed = false; paused = false; ended = false
-            scheduledFrames = 0; leftoverByte = nil
-            epoch &+= 1   // invalidate in-flight completion callbacks
-        }
     }
 
     /// Approximate: is anything still queued?
