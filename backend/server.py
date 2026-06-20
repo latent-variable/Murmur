@@ -258,15 +258,32 @@ def wav_bytes(samples: np.ndarray) -> bytes:
 
 
 # --- app ------------------------------------------------------------------------
+from chatterbox_engine import ChatterboxTurboEngine
+
 engine: Engine  # set in main
+cb_engine = ChatterboxTurboEngine()  # optional HD engine; lazy, no torch import yet
 
 
 class SynthReq(BaseModel):
     text: str
-    voice: str = "am_puck"
+    voice: str = "am_puck"      # kokoro voice id, OR chatterbox reference-clip id
     speed: float = 1.0
     lang: Optional[str] = None
-    pause_scale: float = 1.0   # multiplies the gaps between sentences/lines/paragraphs
+    pause_scale: float = 1.0    # multiplies the gaps between sentences/lines/paragraphs
+    engine: str = "kokoro"      # "kokoro" | "chatterbox"
+
+
+# Reference voice clips for the Chatterbox (cloning) engine live here.
+def hd_voices_dir() -> Path:
+    d = Path(os.environ.get("MURMUR_HD_VOICES") or
+             (Path.home() / "Library/Application Support/Murmur/hd-voices"))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def hd_voice_path(voice_id: str) -> Optional[Path]:
+    p = hd_voices_dir() / f"{voice_id}.wav"
+    return p if p.exists() else None
 
 
 app = FastAPI(title="Murmur TTS", docs_url=None, redoc_url=None)
@@ -284,11 +301,30 @@ def health():
         "provider_mode": engine.provider_mode,
         "active_providers": engine.active_providers,
         "available_providers": engine.available_providers(),
+        "engines": engines_status(),
     }
 
 
+def engines_status() -> dict:
+    return {
+        "kokoro": {"name": "kokoro", "label": "Kokoro", "installed": engine.files_present(),
+                   "loaded": engine.kokoro is not None},
+        "chatterbox": cb_engine.status(),
+    }
+
+
+@app.get("/engines")
+def engines():
+    return engines_status()
+
+
 @app.get("/voices")
-def voices():
+def voices(engine_name: str = Query("kokoro", alias="engine")):
+    if engine_name == "chatterbox":
+        items = []
+        for p in sorted(hd_voices_dir().glob("*.wav")):
+            items.append({"id": p.stem, "lang": "any", "lang_label": "Cloned", "gender": "ref"})
+        return {"voices": items, "count": len(items)}
     items = []
     for v in engine.voices():
         lang = lang_for_voice(v)
@@ -313,18 +349,34 @@ def models():
     }
 
 
-@app.post("/synthesize")
-def synthesize(req: SynthReq, format: str = Query("pcm")):
-    if not req.text.strip():
-        raise HTTPException(400, "empty text")
+def _segment_synth(req: SynthReq):
+    """Return a `synth(text) -> ndarray` bound to the requested engine."""
+    if req.engine == "chatterbox":
+        ref = hd_voice_path(req.voice)
+        if ref is None:
+            raise HTTPException(400, f"reference voice '{req.voice}' not found")
+        if not cb_engine.load():
+            raise HTTPException(503, cb_engine.error or "HD engine not available")
+        ref_str = str(ref)
+        return lambda text: cb_engine.synth(text, ref_str, req.speed)
+    # default: Kokoro
     if engine.kokoro is None:
         engine.load()
     if engine.kokoro is None:
         raise HTTPException(503, engine.error or "engine not loaded")
+    return lambda text: engine.synth(text, req.voice, req.speed, req.lang)
+
+
+@app.post("/synthesize")
+def synthesize(req: SynthReq, format: str = Query("pcm")):
+    if not req.text.strip():
+        raise HTTPException(400, "empty text")
 
     segments = segment_text(req.text)
     if not segments:
         raise HTTPException(400, "no speakable text")
+    do_synth = _segment_synth(req)
+
     # Couple pauses to speed: faster speech -> proportionally shorter gaps, so
     # cadence stays natural at any speed. pause_scale is the user's multiplier.
     scale = max(0.0, req.pause_scale) / max(0.25, req.speed)
@@ -336,7 +388,7 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
     if format == "wav":
         parts: list[np.ndarray] = []
         for text, gap in segments:
-            parts.append(engine.synth(text, req.voice, req.speed, req.lang))
+            parts.append(do_synth(text))
             if gap > 0:
                 parts.append(silence(gap))
         joined = np.concatenate(parts) if parts else np.zeros(0, np.float32)
@@ -347,7 +399,7 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
     def gen() -> Iterator[bytes]:
         for i, (text, gap) in enumerate(segments):
             try:
-                samples = engine.synth(text, req.voice, req.speed, req.lang)
+                samples = do_synth(text)
             except Exception as e:  # noqa: BLE001
                 log.error("synth segment %d failed: %s", i, e)
                 continue
@@ -357,7 +409,8 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
 
     return StreamingResponse(gen(), media_type="application/octet-stream",
                              headers={"X-Sample-Rate": str(SAMPLE_RATE),
-                                      "X-Chunks": str(len(segments))})
+                                      "X-Chunks": str(len(segments)),
+                                      "X-Engine": req.engine})
 
 
 def main() -> None:
