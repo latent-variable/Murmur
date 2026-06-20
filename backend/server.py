@@ -172,8 +172,9 @@ HD_FIRST_SECONDS = 2.8    # first chunk floor: sets the buffer floor T₀ and ve
 HD_MIN_SECONDS = 1.8      # drain-free floor for later chunks: above the RTF=1
                           # breakeven (~1.6s), so each still banks slack
 HD_MAX_SECONDS = 6.0      # target ceiling (keeps long runs responsive)
-HD_MAX_CHARS = 72         # cap ONE sentence (comma-preferring) so its generate
-                          # stays within the first chunk's banked buffer
+HD_MAX_CHARS = 68         # cap ONE sentence (comma-preferring) so gen(sentence)
+                          # ≤ gen at the first-chunk floor T₀ — no single sentence
+                          # can outrun the initial banked buffer
 HD_SAFETY_SECONDS = 0.3   # size chunks to finish generating this far AHEAD of
                           # the buffer draining, so MPS/CPU jitter can't underrun
 
@@ -229,7 +230,11 @@ def merge_for_hd(segs: list[tuple[str, float]]) -> list[tuple[str, float]]:
         if not buf:
             return
         text = " ".join(t for t, _ in buf)
-        out.append((text, buf[-1][1]))      # chunk's trailing gap = last seg's
+        # Trailing gap = the LARGEST gap among the merged segments, not just the
+        # last. When a short paragraph/line is absorbed into a chunk, its longer
+        # pause is preserved at the chunk boundary instead of being dropped.
+        # (Extra silence only deepens the buffer — it can't cause an underrun.)
+        out.append((text, max(g for _, g in buf)))
         audio_s = len(text) / HD_CHARS_PER_SEC
         if first:
             banked = audio_s                # playback starts as this chunk lands

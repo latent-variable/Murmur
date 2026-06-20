@@ -150,6 +150,23 @@ Accessibility permission and a real focused app; audio needs an output device.
 - If you change the backend payload shape, update `BackendClient` and
   `AudioPlayer` together and re-run the validation list above.
 
+### Review cycle (required before merge)
+
+Every PR goes through automated review (Gemini Code Assist + the repo reviewer).
+The loop is severity-gated:
+
+- **High-priority findings are blocking.** While any review round returns even a
+  single high-priority item, you must address **every** item raised that round
+  (high *and* medium), push, and request another review. Repeat until a full
+  round comes back with **zero high-priority items**. Don't merge, and don't
+  stop the loop, while a high is outstanding.
+- **Medium / low are judgment calls.** Once no highs remain, you may use
+  judgment on the mediums (fix, or note why not) and merge.
+- Re-request a review with a `/gemini review` PR comment after each push, and
+  confirm the new review's `commit_id` matches `HEAD` before reading its verdict
+  — Gemini sometimes reports against an earlier commit.
+- Reply on the PR each round listing what was addressed.
+
 ## Releases
 
 Versioned in `app/Resources/Info.plist` (`CFBundleShortVersionString`).

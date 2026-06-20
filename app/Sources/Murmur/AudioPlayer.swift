@@ -9,13 +9,21 @@ final class AudioPlayer {
     private let pitchUnit = AVAudioUnitTimePitch()
     private let inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: 24000, channels: 1, interleaved: false)!
-    private var leftoverByte: UInt8?
     // feed() runs on the background streaming thread; transport (pause/resume/
     // stop/start) and the schedule-completion callback run on other threads. This
-    // lock guards the shared counters/flags below. AVAudioEngine calls (play/
-    // pause/…) are made OUTSIDE the lock so they never block under it.
+    // lock guards ALL mutable state below AND the player.play()/pause() that
+    // follows a state change, so the two are atomic — a concurrent pause can't be
+    // lost in the window between checking `paused` and calling play(). play/pause
+    // only signal the render thread (they don't block), so holding the lock across
+    // them is safe; the completion callback takes the lock only to adjust a
+    // counter, never nesting.
     private let lock = NSLock()
+    private var leftoverByte: UInt8?
     private var scheduledFrames: AVAudioFrameCount = 0
+    // Bumped on stop()/start(). A scheduleBuffer completion from a previous
+    // session carries the old epoch and is ignored, so it can't decrement (and
+    // underflow, since the count is unsigned) the new session's frame counter.
+    private var epoch: UInt64 = 0
     // Pre-buffer: hold playback until this much audio is queued, so transient
     // slow chunks (HD generates near real-time) don't cause silence gaps.
     private var primeFrames: AVAudioFrameCount = 8400  // ~0.35s default
@@ -54,7 +62,11 @@ final class AudioPlayer {
         stop()
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
-        lock.withLock { primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000); primed = false; ended = false }
+        lock.withLock {
+            primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
+            primed = false; ended = false; leftoverByte = nil; scheduledFrames = 0
+            epoch &+= 1
+        }
         do {
             if !engine.isRunning { try engine.start() }
             // engine running but the node waits for the cushion (see feed/flush)
@@ -66,24 +78,19 @@ final class AudioPlayer {
     /// Start playback now even if the cushion isn't full (call when the stream
     /// ends, so short clips below the cushion still play).
     func flush() {
-        var shouldPlay = false
         lock.withLock {
             ended = true
-            if !paused && !primed && scheduledFrames > 0 { primed = true; shouldPlay = true }
+            if !paused && !primed && scheduledFrames > 0 { primed = true; player.play() }
         }
-        if shouldPlay { player.play() }
     }
 
     /// Feed raw int16 little-endian PCM bytes.
     func feed(_ data: Data) {
         var bytes = data
-        if let lo = leftoverByte {
-            bytes.insert(lo, at: 0)
-            leftoverByte = nil
-        }
-        if bytes.count % 2 == 1 {
-            leftoverByte = bytes.last
-            bytes.removeLast()
+        let myEpoch: UInt64 = lock.withLock {
+            if let lo = leftoverByte { bytes.insert(lo, at: 0); leftoverByte = nil }
+            if bytes.count % 2 == 1 { leftoverByte = bytes.last; bytes.removeLast() }
+            return epoch
         }
         guard !bytes.isEmpty else { return }
         let sampleCount = bytes.count / 2
@@ -97,50 +104,56 @@ final class AudioPlayer {
                 dst[i] = Float(Int16(littleEndian: src[i])) / 32768.0
             }
         }
-        lock.withLock { scheduledFrames += buffer.frameLength }
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            guard let self else { return }
-            self.lock.withLock { self.scheduledFrames -= buffer.frameLength }
-        }
-        // Start once the cushion is full; after that, keep the node playing —
-        // unless the user paused, in which case keep buffering but stay stopped.
-        var shouldPlay = false
+        let frames = buffer.frameLength
         lock.withLock {
-            if paused { return }
-            if !primed {
-                if scheduledFrames >= primeFrames { primed = true; shouldPlay = true }
-            } else {
-                shouldPlay = true   // already primed; ensure the node keeps going
+            scheduledFrames += frames
+            // Start once the cushion is full; after that, keep the node playing —
+            // unless paused, in which case keep buffering but stay stopped. Done
+            // under the lock so a concurrent pause() can't be lost.
+            if !paused {
+                if !primed {
+                    if scheduledFrames >= primeFrames { primed = true; player.play() }
+                } else if !player.isPlaying {
+                    player.play()
+                }
             }
         }
-        if shouldPlay && !player.isPlaying { player.play() }
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            guard let self else { return }
+            self.lock.withLock {
+                // ignore completions from a previous session; clamp so the
+                // unsigned counter can never underflow
+                guard myEpoch == self.epoch else { return }
+                self.scheduledFrames = self.scheduledFrames >= frames ? self.scheduledFrames - frames : 0
+            }
+        }
     }
 
     func pause() {
-        lock.withLock { paused = true }
-        player.pause()
+        lock.withLock { paused = true; player.pause() }
     }
     func resume() {
-        var shouldPlay = false
+        if !engine.isRunning { try? engine.start() }
         lock.withLock {
             paused = false
             if primed {
-                shouldPlay = true                       // was playing before pause
+                player.play()                                 // was playing before pause
             } else if ended && scheduledFrames > 0 {
-                primed = true; shouldPlay = true        // stream done: play remainder
+                primed = true; player.play()                  // stream done: play remainder
             }
             // else paused mid-prime, stream still live: leave unprimed so feed()
             // refills the cushion before starting — avoids an undersized buffer.
         }
-        if !engine.isRunning { try? engine.start() }
-        if shouldPlay { player.play() }
     }
 
     func stop() {
         player.stop()
         player.reset()
-        lock.withLock { primed = false; paused = false; ended = false; scheduledFrames = 0 }
-        leftoverByte = nil
+        lock.withLock {
+            primed = false; paused = false; ended = false
+            scheduledFrames = 0; leftoverByte = nil
+            epoch &+= 1   // invalidate in-flight completion callbacks
+        }
     }
 
     /// Approximate: is anything still queued?
