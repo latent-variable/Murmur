@@ -143,7 +143,7 @@ final class AppState: ObservableObject {
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch))
         do {
             try await backend.client.streamPCM(text: cleaned, voice: prefs.voice,
-                                                speed: prefs.speed) { [weak self] data in
+                                                speed: prefs.speed, pauseScale: prefs.pauseScale) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(data)
             }
@@ -211,7 +211,7 @@ final class AppState: ObservableObject {
         let text = lastCleaned.isEmpty ? cleanedText(lastCaptured) : lastCleaned
         guard !text.isEmpty else { return }
         Task {
-            guard let data = try? await backend.client.wav(text: text, voice: prefs.voice, speed: prefs.speed) else {
+            guard let data = try? await backend.client.wav(text: text, voice: prefs.voice, speed: prefs.speed, pauseScale: prefs.pauseScale) else {
                 status = .error("Export failed"); return
             }
             let panel = NSSavePanel()

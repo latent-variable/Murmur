@@ -62,6 +62,7 @@ private struct VoiceTab: View {
                     slider("Speed", $prefs.speed, 0.5...2.0, "%.2f×")
                     slider("Pitch", $prefs.pitch, -600...600, "%.0f¢")
                     slider("Volume", $prefs.volume, 0...1, "%.0f%%", scale: 100)
+                    slider("Pause", $prefs.pauseScale, 0...2.5, "%.2f×")
                 }
             }
             .formStyle(.grouped)

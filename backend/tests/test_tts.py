@@ -11,7 +11,8 @@ import wave
 import numpy as np
 import pytest
 
-from server import chunk_text, split_sentences, Engine, SAMPLE_RATE, resolve_provider
+from server import (chunk_text, split_sentences, segment_text, Engine, SAMPLE_RATE,
+                    resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH)
 from pathlib import Path
 
 MODELS = Path.home() / "Library/Application Support/Murmur/models"
@@ -62,6 +63,31 @@ class TestChunking:
         chunks = chunk_text(text)
         for c in chunks:
             assert c.strip(), "empty chunk leaked"
+
+
+class TestSegmentation:
+    def test_sentence_gaps(self):
+        segs = segment_text("One. Two. Three.")
+        assert [s for s, _ in segs] == ["One.", "Two.", "Three."]
+        # last segment no trailing gap; earlier ones get the sentence gap
+        assert segs[0][1] == GAP_SENTENCE and segs[-1][1] == 0.0
+
+    def test_paragraph_gap_longer_than_sentence(self):
+        segs = segment_text("First para.\n\nSecond para.")
+        assert segs[0][1] == GAP_PARAGRAPH
+        assert GAP_PARAGRAPH > GAP_LINE > GAP_SENTENCE
+
+    def test_line_breaks_get_pauses(self):
+        # a bulleted-style list on separate lines must not run together
+        segs = segment_text("Apples\nOranges\nPears")
+        assert [s for s, _ in segs] == ["Apples", "Oranges", "Pears"]
+        assert segs[0][1] == GAP_LINE and segs[1][1] == GAP_LINE
+
+    def test_no_speech_lost(self):
+        text = "Intro line.\n\n- one\n- two\n\nOutro."
+        joined = " ".join(s for s, _ in segment_text(text))
+        for word in ("Intro", "one", "two", "Outro"):
+            assert word in joined
 
 
 # ── synthesis robustness ────────────────────────────────────────────────────

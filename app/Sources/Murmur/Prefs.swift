@@ -57,6 +57,7 @@ final class Prefs: ObservableObject {
     @Published var speed: Double { didSet { d.set(speed, forKey: "speed") } }
     @Published var pitch: Double { didSet { d.set(pitch, forKey: "pitch") } }    // cents
     @Published var volume: Double { didSet { d.set(volume, forKey: "volume") } }
+    @Published var pauseScale: Double { didSet { d.set(pauseScale, forKey: "pauseScale") } }  // pause length multiplier
     @Published var profile: Profile { didSet { d.set(profile.rawValue, forKey: "profile") } }
     @Published var captureMode: CaptureMode { didSet { d.set(captureMode.rawValue, forKey: "captureMode") } }
     @Published var readSource: ReadSource { didSet { d.set(readSource.rawValue, forKey: "readSource") } }
@@ -73,6 +74,7 @@ final class Prefs: ObservableObject {
         speed = d.object(forKey: "speed") as? Double ?? 1.0
         pitch = d.object(forKey: "pitch") as? Double ?? 0.0
         volume = d.object(forKey: "volume") as? Double ?? 1.0
+        pauseScale = d.object(forKey: "pauseScale") as? Double ?? 1.0
         profile = Profile(rawValue: d.string(forKey: "profile") ?? "") ?? .general
         captureMode = CaptureMode(rawValue: d.string(forKey: "captureMode") ?? "") ?? .clipboard
         readSource = ReadSource(rawValue: d.string(forKey: "readSource") ?? "") ?? .selection

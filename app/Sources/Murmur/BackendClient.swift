@@ -44,21 +44,23 @@ struct BackendClient {
         return r.voices
     }
 
-    private func synthRequest(_ text: String, voice: String, speed: Double, wav: Bool) -> URLRequest {
+    private func synthRequest(_ text: String, voice: String, speed: Double,
+                              pauseScale: Double, wav: Bool) -> URLRequest {
         var url = base.appending(path: "synthesize")
         if wav { url.append(queryItems: [URLQueryItem(name: "format", value: "wav")]) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["text": text, "voice": voice, "speed": speed]
+        let body: [String: Any] = ["text": text, "voice": voice, "speed": speed,
+                                   "pause_scale": pauseScale]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return req
     }
 
     /// Stream raw int16 PCM. `onChunk` receives bytes as they arrive.
-    func streamPCM(text: String, voice: String, speed: Double,
+    func streamPCM(text: String, voice: String, speed: Double, pauseScale: Double = 1.0,
                    onChunk: @escaping (Data) -> Void) async throws {
-        let req = synthRequest(text, voice: voice, speed: speed, wav: false)
+        let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale, wav: false)
         let (bytes, response) = try await session.bytes(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw NSError(domain: "Murmur", code: http.statusCode,
@@ -77,8 +79,8 @@ struct BackendClient {
     }
 
     /// Fetch a complete WAV (for export).
-    func wav(text: String, voice: String, speed: Double) async throws -> Data {
-        let req = synthRequest(text, voice: voice, speed: speed, wav: true)
+    func wav(text: String, voice: String, speed: Double, pauseScale: Double = 1.0) async throws -> Data {
+        let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale, wav: true)
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw NSError(domain: "Murmur", code: http.statusCode,

@@ -93,34 +93,69 @@ def split_sentences(text: str) -> list[str]:
 
 
 def chunk_text(text: str, max_chars: int = 320) -> list[str]:
-    """Paragraphs -> sentences -> length-capped chunks."""
-    chunks: list[str] = []
-    for para in re.split(r"\n\s*\n", text):
-        para = para.strip()
-        if not para:
+    """Paragraphs -> sentences -> length-capped chunks (text only)."""
+    return [seg for seg, _gap in segment_text(text, max_chars)]
+
+
+# Silence (seconds) inserted AFTER a segment, by the boundary it ends on. These
+# are what give speech its natural cadence instead of one run-on stream.
+GAP_SENTENCE = 0.18   # between sentences in the same line/paragraph
+GAP_LINE = 0.28       # at a single line break (lists, headings, wrapped lines)
+GAP_PARAGRAPH = 0.5   # between paragraphs (blank line)
+
+
+def _hardwrap(sentence: str, max_chars: int) -> list[str]:
+    if len(sentence) <= max_chars:
+        return [sentence]
+    out, line = [], ""
+    for w in sentence.split(" "):
+        if len(line) + len(w) + 1 > max_chars:
+            out.append(line.strip()); line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        out.append(line.strip())
+    return out
+
+
+def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
+    """Split into speakable segments, each tagged with the silence to play
+    after it. Respects paragraphs (blank lines), single line breaks, and
+    sentences so the audio gets real pauses where the writing has structure.
+    """
+    segs: list[tuple[str, float]] = []
+    paragraphs = [p for p in re.split(r"\n\s*\n", text)]
+    for pi, para in enumerate(paragraphs):
+        if not para.strip():
             continue
-        cur = ""
-        for sent in split_sentences(para) or [para]:
-            if len(sent) > max_chars:
-                # hard wrap an over-long sentence on word boundaries
-                if cur:
-                    chunks.append(cur); cur = ""
-                words = sent.split(" ")
-                line = ""
-                for w in words:
-                    if len(line) + len(w) + 1 > max_chars:
-                        chunks.append(line.strip()); line = w
+        last_para = pi == len(paragraphs) - 1
+        lines = [ln for ln in para.split("\n")]
+        nonempty_lines = [i for i, ln in enumerate(lines) if ln.strip()]
+        for li, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            last_line = li == (nonempty_lines[-1] if nonempty_lines else li)
+            sentences = split_sentences(line) or [line]
+            for si, sent in enumerate(sentences):
+                last_sent = si == len(sentences) - 1
+                pieces = _hardwrap(sent.strip(), max_chars)
+                for k, piece in enumerate(pieces):
+                    if not piece:
+                        continue
+                    last_piece = k == len(pieces) - 1
+                    if last_piece and last_sent and last_line and last_para:
+                        gap = 0.0
+                    elif last_piece and last_sent and last_line:
+                        gap = GAP_PARAGRAPH
+                    elif last_piece and last_sent:
+                        gap = GAP_LINE
+                    elif last_piece:
+                        gap = GAP_SENTENCE
                     else:
-                        line = f"{line} {w}".strip()
-                if line:
-                    chunks.append(line.strip())
-            elif len(cur) + len(sent) + 1 > max_chars:
-                chunks.append(cur); cur = sent
-            else:
-                cur = f"{cur} {sent}".strip()
-        if cur:
-            chunks.append(cur)
-    return chunks
+                        gap = GAP_SENTENCE * 0.5  # mid-sentence hard wrap
+                    segs.append((piece, gap))
+    return segs
 
 
 # --- engine ---------------------------------------------------------------------
@@ -231,6 +266,7 @@ class SynthReq(BaseModel):
     voice: str = "am_puck"
     speed: float = 1.0
     lang: Optional[str] = None
+    pause_scale: float = 1.0   # multiplies the gaps between sentences/lines/paragraphs
 
 
 app = FastAPI(title="Murmur TTS", docs_url=None, redoc_url=None)
@@ -286,32 +322,40 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
     if engine.kokoro is None:
         raise HTTPException(503, engine.error or "engine not loaded")
 
-    chunks = chunk_text(req.text)
-    if not chunks:
+    segments = segment_text(req.text)
+    if not segments:
         raise HTTPException(400, "no speakable text")
+    scale = max(0.0, req.pause_scale)
+
+    def silence(seconds: float) -> np.ndarray:
+        n = int(SAMPLE_RATE * seconds * scale)
+        return np.zeros(n, dtype=np.float32) if n > 0 else np.zeros(0, dtype=np.float32)
 
     if format == "wav":
-        pieces = [engine.synth(c, req.voice, req.speed, req.lang) for c in chunks]
-        gap = np.zeros(int(SAMPLE_RATE * 0.12), dtype=np.float32)
-        joined = np.concatenate([p for c in pieces for p in (c, gap)]) if pieces else np.zeros(0, np.float32)
+        parts: list[np.ndarray] = []
+        for text, gap in segments:
+            parts.append(engine.synth(text, req.voice, req.speed, req.lang))
+            if gap > 0:
+                parts.append(silence(gap))
+        joined = np.concatenate(parts) if parts else np.zeros(0, np.float32)
         data = wav_bytes(joined)
         return Response(content=data, media_type="audio/wav",
                         headers={"Content-Disposition": "attachment; filename=murmur.wav"})
 
     def gen() -> Iterator[bytes]:
-        for i, c in enumerate(chunks):
+        for i, (text, gap) in enumerate(segments):
             try:
-                samples = engine.synth(c, req.voice, req.speed, req.lang)
+                samples = engine.synth(text, req.voice, req.speed, req.lang)
             except Exception as e:  # noqa: BLE001
-                log.error("synth chunk %d failed: %s", i, e)
+                log.error("synth segment %d failed: %s", i, e)
                 continue
             yield pcm16(samples)
-            # short silence between chunks for natural pacing
-            yield pcm16(np.zeros(int(SAMPLE_RATE * 0.1), dtype=np.float32))
+            if gap > 0:
+                yield pcm16(silence(gap))
 
     return StreamingResponse(gen(), media_type="application/octet-stream",
                              headers={"X-Sample-Rate": str(SAMPLE_RATE),
-                                      "X-Chunks": str(len(chunks))})
+                                      "X-Chunks": str(len(segments))})
 
 
 def main() -> None:
