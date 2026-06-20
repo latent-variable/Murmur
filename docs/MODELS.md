@@ -33,14 +33,25 @@ that clean win doesn't exist yet. **Decision: stay on Kokoro, keep watching.**
 | **Kitten TTS** | ~25 MB (int8) | Apache-2.0 | Tiny; slower than Piper, quality ≈ or < Kokoro | **Watch** — promising footprint, immature |
 | **MatchaTTS** | small | MIT | CPU ONNX; quality sidegrade | Watch |
 
-### Quality leaders that cost a GPU (break constraint #1)
-| Model | License | Note | Verdict |
-|---|---|---|---|
-| **Chatterbox** (Resemble) | MIT | Strong quality + zero-shot cloning; realistically GPU | Revisit only if we ever add an optional GPU path |
-| **Qwen3-TTS / CosyVoice 3** | Apache | Excellent, multilingual; heavier, GPU | Watch |
-| **Fish Audio S2 / OpenAudio** | mixed | High quality; heavy | Watch (license per-model) |
-| **F5-TTS / StyleTTS2 / XTTS-v2** | varies | Quality + cloning; GPU/heavier | Not aligned |
-| **Sesame CSM** | — | Top open MOS (~4.7) but heavy | Aspirational only |
+### Quality leaders (GPU-class) — specs
+Reference for an optional "HD mode" (opt-in download + GPU), never the bundled default.
+
+| Model | Params | Weights size | Quality | Extras | License |
+|---|---|---|---|---|---|
+| Kokoro (baseline) | 82M | ~310 MB ONNX | good | 54 voices, no clone | Apache-2.0 |
+| **Chatterbox** | 0.5B | ~1–2 GB | SoTA open, expressive | emotion control, zero-shot clone, 23 langs | MIT |
+| **Chatterbox-Turbo** | 350M | smaller | high (distilled 1-step decoder) | clone; RTF ~0.5 on RTX 4090 | Resemble |
+| **Qwen3-TTS** | 0.6B–1.7B | ~1.5–4 GB | excellent, streaming | voice design + clone, GGUF builds exist | Apache-2.0 |
+| **CosyVoice 2/3** | ~0.5B (Qwen2.5-0.5B backbone) | ~1–2 GB | excellent, streaming | clone | Apache-2.0 |
+| **F5-TTS** | 336M | ~1.3 GB | strong | DiT diffusion (slower, multi-step), clone | permissive |
+| **Sesame CSM-1B** | 1B + 100M decoder | ~2 GB | top realism (conversational) | only the 1B of 3 sizes open-sourced | Apache-2.0 |
+
+VRAM/latency quotes are NVIDIA (e.g. Chatterbox ~2–3 GB VRAM, sub-200ms; Turbo RTF 0.499 on a 4090). **They do not transfer to Mac.**
+
+### Apple Silicon reality (this is our GPU)
+- "GPU" on a Mac = Metal. The fast path is **MLX** (`mlx-audio`, Blaizzy) — highest sustained TTS throughput on Apple Silicon; supports Kokoro and others. PyTorch **MPS** works but is memory-constrained and slower; CUDA-only optimizations don't apply.
+- These models are PyTorch/transformers, **not ONNX** → can't bundle cleanly, need a multi-GB download, slower cold start. That's why they're "HD mode, opt-in," not the default.
+- If we add HD mode, the two to prototype first: **Chatterbox** (MIT, best quality+emotion+clone, has community Apple-Silicon ports) and **Qwen3-TTS** (Apache, expressive, GGUF/quantized builds). Route them through MLX if a port exists, else PyTorch MPS.
 
 ## What would make us switch
 
