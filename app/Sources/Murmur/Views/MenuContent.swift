@@ -30,19 +30,14 @@ struct MenuContent: View {
             Divider()
 
             HStack(spacing: 10) {
-                if prefs.engine == "chatterbox" {
-                    VoiceMenuButton(voices: state.hdVoices, selection: $prefs.hdVoice)
-                } else {
-                    VoiceMenuButton(voices: state.voices, selection: $prefs.voice)
+                VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
+                    state.selectVoice($0)
                 }
                 Button { state.testVoice() } label: {
                     Image(systemName: "speaker.wave.2.fill")
                 }
                 .buttonStyle(.borderless)
                 .help("Test voice")
-            }
-            if prefs.engine == "chatterbox" {
-                Text("HD engine").font(.caption2).foregroundStyle(.tint)
             }
 
             VStack(spacing: 4) {
@@ -96,10 +91,13 @@ struct MenuContent: View {
                 .symbolEffect(.pulse, isActive: state.status == .reading)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Murmur").font(.headline)
-                Text(state.status.label).font(.caption).foregroundStyle(.secondary)
+                Text(state.preparing ? "Preparing voice…" : state.status.label)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if !state.modelsPresent {
+            if state.preparing {
+                ProgressView().controlSize(.small)
+            } else if !state.modelsPresent {
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
                     .help("Models not installed — open Settings ▸ Models")
             }

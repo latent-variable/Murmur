@@ -17,6 +17,8 @@ VOICES=(
   "Aria|slt|US English, female"
   "Clara|clb|US English, female"
   "Ben|bdl|US English, male"
+  "Cole|rms|US English, male"
+  "Jake|jmk|Canadian English, male"
   "Angus|awb|Scottish English, male"
   "Ravi|ksp|Indian English, male"
 )

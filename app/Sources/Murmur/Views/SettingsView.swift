@@ -53,7 +53,9 @@ private struct VoiceTab: View {
                 Button { state.testVoice() } label: { Label("Test", systemImage: "speaker.wave.2.fill") }
                     .controlSize(.small)
             }
-            VoicePickerList(voices: state.voices, selection: $prefs.voice)
+            VoicePickerList(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
+                state.selectVoice($0)
+            }
                 .frame(minHeight: 220)
                 .background(.background, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))

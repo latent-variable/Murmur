@@ -40,9 +40,30 @@ final class AppState: ObservableObject {
     @Published var axTrusted = Permissions.axTrusted
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
+    @Published var preparing = false   // synth requested, first audio not yet playing
 
     /// The voice id for the currently selected engine.
     var activeVoice: String { prefs.engine == "chatterbox" ? prefs.hdVoice : prefs.voice }
+
+    /// One id space across engines for the unified voice picker.
+    var currentVoiceId: String { "\(prefs.engine):\(activeVoice)" }
+
+    /// Kokoro voices (grouped by language) + HD voices (own section), as one list.
+    var combinedVoices: [EngineVoice] {
+        var out: [EngineVoice] = voices.map {
+            EngineVoice(engine: "kokoro", voiceId: $0.id, label: $0.shortName, section: $0.lang_label)
+        }
+        out += hdVoices.map {
+            EngineVoice(engine: "chatterbox", voiceId: $0.id, label: $0.id, section: "✨ HD Engine")
+        }
+        return out
+    }
+
+    /// Pick a voice from the unified list — sets the engine and its voice.
+    func selectVoice(_ v: EngineVoice) {
+        prefs.engine = v.engine
+        if v.engine == "chatterbox" { prefs.hdVoice = v.voiceId } else { prefs.voice = v.voiceId }
+    }
 
     let prefs = Prefs.shared
     let backend = BackendManager()
@@ -155,6 +176,7 @@ final class AppState: ObservableObject {
 
         playingText = cleaned
         status = .reading
+        preparing = true   // first audio not here yet (HD can take a few seconds)
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
         do {
             // Speed is applied at playback (real-time, both engines), so the
@@ -163,15 +185,16 @@ final class AppState: ObservableObject {
                                                 speed: 1.0, pauseScale: prefs.pauseScale,
                                                 engine: prefs.engine) { [weak self] data in
                 guard let self, gen == self.generation else { return }
+                self.preparing = false
                 self.audio.feed(data)
             }
             // drain
             while gen == generation && audio.hasQueued && status == .reading {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
-            if gen == generation && status == .reading { status = .idle; playingText = "" }
+            if gen == generation && status == .reading { status = .idle; playingText = ""; preparing = false }
         } catch {
-            if gen == generation { status = .error(error.localizedDescription); resetToIdle(after: 3) }
+            if gen == generation { preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
         }
     }
 
@@ -204,6 +227,7 @@ final class AppState: ObservableObject {
         generation += 1
         audio.stop()
         playingText = ""
+        preparing = false
         status = .idle
     }
 
@@ -214,6 +238,7 @@ final class AppState: ObservableObject {
             generation += 1
             let gen = generation
             status = .reading
+            preparing = true
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
@@ -221,10 +246,11 @@ final class AppState: ObservableObject {
             try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
                                                 pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
                 guard let self, gen == self.generation else { return }
+                self.preparing = false
                 self.audio.feed(d)
             }
             while gen == generation && audio.hasQueued { try? await Task.sleep(nanoseconds: 150_000_000) }
-            if gen == generation { status = .idle }
+            if gen == generation { preparing = false; status = .idle }
         }
     }
 

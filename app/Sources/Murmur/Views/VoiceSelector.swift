@@ -12,30 +12,40 @@ extension VoiceInfo {
     }
 }
 
-/// Scrollable, searchable, language-grouped voice list. Replaces the native
-/// Picker menu, which gives no indication there are more voices to scroll to.
+/// A voice from either engine, in one id space ("engine:voiceId").
+struct EngineVoice: Identifiable, Hashable {
+    let engine: String
+    let voiceId: String
+    let label: String
+    let section: String
+    var id: String { "\(engine):\(voiceId)" }
+}
+
+/// Scrollable, searchable picker spanning both engines. Kokoro voices are
+/// grouped by language; HD voices sit in their own section. Picking a voice
+/// also switches the engine — one place to choose everything.
 struct VoicePickerList: View {
-    let voices: [VoiceInfo]
-    @Binding var selection: String
-    var onPick: (() -> Void)? = nil
+    let voices: [EngineVoice]
+    let selectionId: String
+    var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
-    private var grouped: [(String, [VoiceInfo])] {
+    private var grouped: [(String, [EngineVoice])] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let filtered = q.isEmpty ? voices : voices.filter {
-            $0.display.lowercased().contains(q) || $0.id.lowercased().contains(q)
+            $0.label.lowercased().contains(q) || $0.section.lowercased().contains(q)
         }
-        return Dictionary(grouping: filtered, by: \.lang_label)
-            .sorted { $0.key < $1.key }
-            .map { ($0.key, $0.value.sorted { $0.id < $1.id }) }
+        // HD section first, then languages alphabetically.
+        return Dictionary(grouping: filtered, by: \.section)
+            .sorted { ($0.key.hasPrefix("✨") ? "0" : "1") + $0.key < ($1.key.hasPrefix("✨") ? "0" : "1") + $1.key }
+            .map { ($0.key, $0.value.sorted { $0.label < $1.label }) }
     }
 
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.caption)
-                TextField("Search \(voices.count) voices", text: $query)
-                    .textFieldStyle(.plain)
+                TextField("Search \(voices.count) voices", text: $query).textFieldStyle(.plain)
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -46,30 +56,23 @@ struct VoicePickerList: View {
 
             ScrollViewReader { proxy in
                 List {
-                    ForEach(grouped, id: \.0) { lang, list in
-                        Section(lang) {
-                            ForEach(list) { v in row(v) }
-                        }
+                    ForEach(grouped, id: \.0) { section, list in
+                        Section(section) { ForEach(list) { row($0) } }
                     }
-                    if grouped.isEmpty {
-                        Text("No matches").foregroundStyle(.secondary).font(.caption)
-                    }
+                    if grouped.isEmpty { Text("No matches").foregroundStyle(.secondary).font(.caption) }
                 }
                 .listStyle(.inset)
-                .onAppear { proxy.scrollTo(selection, anchor: .center) }
+                .onAppear { proxy.scrollTo(selectionId, anchor: .center) }
             }
         }
     }
 
-    private func row(_ v: VoiceInfo) -> some View {
-        Button {
-            selection = v.id
-            onPick?()
-        } label: {
+    private func row(_ v: EngineVoice) -> some View {
+        Button { onPick(v) } label: {
             HStack {
-                Text(v.shortName)
+                Text(v.label)
                 Spacer()
-                if v.id == selection {
+                if v.id == selectionId {
                     Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
                 }
             }
@@ -77,19 +80,22 @@ struct VoicePickerList: View {
         }
         .buttonStyle(.plain)
         .id(v.id)
-        .listRowBackground(v.id == selection ? Color.accentColor.opacity(0.15) : Color.clear)
+        .listRowBackground(v.id == selectionId ? Color.accentColor.opacity(0.15) : Color.clear)
     }
 }
 
-/// Compact control: shows the current voice, opens the scrollable list in a
-/// popover with a clear chevron affordance.
+/// Compact control showing the current voice; opens the unified list in a popover.
 struct VoiceMenuButton: View {
-    let voices: [VoiceInfo]
-    @Binding var selection: String
+    let voices: [EngineVoice]
+    let selectionId: String
+    var onPick: (EngineVoice) -> Void
     @State private var open = false
 
     private var current: String {
-        voices.first { $0.id == selection }?.display ?? selection
+        if let v = voices.first(where: { $0.id == selectionId }) {
+            return v.engine == "chatterbox" ? "✨ \(v.label)" : v.label
+        }
+        return selectionId.split(separator: ":").last.map(String.init) ?? selectionId
     }
 
     var body: some View {
@@ -106,8 +112,8 @@ struct VoiceMenuButton: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            VoicePickerList(voices: voices, selection: $selection) { open = false }
-                .frame(width: 270, height: 340)
+            VoicePickerList(voices: voices, selectionId: selectionId) { v in onPick(v); open = false }
+                .frame(width: 280, height: 360)
                 .padding(8)
         }
     }

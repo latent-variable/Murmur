@@ -420,7 +420,8 @@ def fetch_starter_voices():
     # (voice id, cmu speaker, description)
     voices = [
         ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
-        ("Ben", "bdl", "US male"), ("Angus", "awb", "Scottish male"),
+        ("Ben", "bdl", "US male"), ("Cole", "rms", "US male"),
+        ("Jake", "jmk", "Canadian male"), ("Angus", "awb", "Scottish male"),
         ("Ravi", "ksp", "Indian male"),
     ]
     dest = hd_voices_dir()
