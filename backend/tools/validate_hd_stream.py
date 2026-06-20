@@ -27,7 +27,11 @@ sys.argv = ["x"]
 from server import segment_text, merge_for_hd
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-REF = sorted((Path.home() / "Library/Application Support/Murmur/hd-voices").glob("*.wav"))[0]
+_refs = sorted((Path.home() / "Library/Application Support/Murmur/hd-voices").glob("*.wav"))
+if not _refs:
+    sys.exit("no HD reference voices in ~/Library/Application Support/Murmur/hd-voices — "
+             "add one (or run the starter-voices fetch) before profiling.")
+REF = _refs[0]
 dev = "mps" if torch.backends.mps.is_available() else "cpu"
 m = ChatterboxTurboTTS.from_pretrained(device=dev)
 m.prepare_conditionals(str(REF))

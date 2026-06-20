@@ -10,6 +10,11 @@ final class AudioPlayer {
     private let inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: 24000, channels: 1, interleaved: false)!
     private var leftoverByte: UInt8?
+    // feed() runs on the background streaming thread; transport (pause/resume/
+    // stop/start) and the schedule-completion callback run on other threads. This
+    // lock guards the shared counters/flags below. AVAudioEngine calls (play/
+    // pause/…) are made OUTSIDE the lock so they never block under it.
+    private let lock = NSLock()
     private var scheduledFrames: AVAudioFrameCount = 0
     // Pre-buffer: hold playback until this much audio is queued, so transient
     // slow chunks (HD generates near real-time) don't cause silence gaps.
@@ -45,8 +50,7 @@ final class AudioPlayer {
         stop()
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
-        primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
-        primed = false
+        lock.withLock { primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000); primed = false }
         do {
             if !engine.isRunning { try engine.start() }
             // engine running but the node waits for the cushion (see feed/flush)
@@ -58,11 +62,11 @@ final class AudioPlayer {
     /// Start playback now even if the cushion isn't full (call when the stream
     /// ends, so short clips below the cushion still play).
     func flush() {
-        if paused { return }
-        if !primed && scheduledFrames > 0 {
-            primed = true
-            player.play()
+        var shouldPlay = false
+        lock.withLock {
+            if !paused && !primed && scheduledFrames > 0 { primed = true; shouldPlay = true }
         }
+        if shouldPlay { player.play() }
     }
 
     /// Feed raw int16 little-endian PCM bytes.
@@ -88,38 +92,44 @@ final class AudioPlayer {
                 dst[i] = Float(Int16(littleEndian: src[i])) / 32768.0
             }
         }
-        scheduledFrames += buffer.frameLength
+        lock.withLock { scheduledFrames += buffer.frameLength }
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
-            self.scheduledFrames -= buffer.frameLength
+            self.lock.withLock { self.scheduledFrames -= buffer.frameLength }
         }
         // Start once the cushion is full; after that, keep the node playing —
         // unless the user paused, in which case keep buffering but stay stopped.
-        if paused { return }
-        if !primed {
-            if scheduledFrames >= primeFrames { primed = true; player.play() }
-        } else if !player.isPlaying {
-            player.play()
+        var shouldPlay = false
+        lock.withLock {
+            if paused { return }
+            if !primed {
+                if scheduledFrames >= primeFrames { primed = true; shouldPlay = true }
+            } else {
+                shouldPlay = true   // already primed; ensure the node keeps going
+            }
         }
+        if shouldPlay && !player.isPlaying { player.play() }
     }
 
-    func pause() { paused = true; player.pause() }
+    func pause() {
+        lock.withLock { paused = true }
+        player.pause()
+    }
     func resume() {
-        paused = false
+        var shouldPlay = false
+        lock.withLock { paused = false; if scheduledFrames > 0 { primed = true; shouldPlay = true } }
         if !engine.isRunning { try? engine.start() }
-        if scheduledFrames > 0 { primed = true; player.play() }
+        if shouldPlay { player.play() }
         // nothing queued yet (paused during cushion fill) — feed() resumes it
     }
 
     func stop() {
         player.stop()
         player.reset()
-        primed = false
-        paused = false
+        lock.withLock { primed = false; paused = false; scheduledFrames = 0 }
         leftoverByte = nil
-        scheduledFrames = 0
     }
 
     /// Approximate: is anything still queued?
-    var hasQueued: Bool { scheduledFrames > 0 }
+    var hasQueued: Bool { lock.withLock { scheduledFrames > 0 } }
 }

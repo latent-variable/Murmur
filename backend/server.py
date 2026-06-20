@@ -174,6 +174,8 @@ HD_MIN_SECONDS = 1.8      # drain-free floor for later chunks: above the RTF=1
 HD_MAX_SECONDS = 6.0      # target ceiling (keeps long runs responsive)
 HD_MAX_CHARS = 72         # cap ONE sentence (comma-preferring) so its generate
                           # stays within the first chunk's banked buffer
+HD_SAFETY_SECONDS = 0.3   # size chunks to finish generating this far AHEAD of
+                          # the buffer draining, so MPS/CPU jitter can't underrun
 
 
 def _hd_gen_seconds(audio_seconds: float) -> float:
@@ -187,7 +189,7 @@ def _split_long_for_hd(text: str, gap: float) -> list[tuple[str, float]]:
     last piece keeps the sentence's real trailing gap."""
     if len(text) <= HD_MAX_CHARS:
         return [(text, gap)]
-    words = text.split(" ")
+    words = text.split()
     pieces: list[str] = []
     line = ""
     for w in words:
@@ -234,8 +236,9 @@ def merge_for_hd(segs: list[tuple[str, float]]) -> list[tuple[str, float]]:
             first = False
         else:
             banked = max(0.0, banked - _hd_gen_seconds(audio_s)) + audio_s
-        # largest next chunk whose generate fits inside the banked buffer
-        safe = (banked - HD_GEN_FIXED) / HD_GEN_PER_SEC
+        # largest next chunk whose generate fits inside the banked buffer, with a
+        # jitter margin so it lands ahead of the buffer draining (not at the wire)
+        safe = (banked - HD_GEN_FIXED - HD_SAFETY_SECONDS) / HD_GEN_PER_SEC
         target_s = min(HD_MAX_SECONDS, max(HD_MIN_SECONDS, safe))
         buf, length = [], 0
 

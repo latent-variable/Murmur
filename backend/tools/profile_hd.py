@@ -38,7 +38,11 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS, punc_norm
 from chatterbox.models.s3gen.const import S3GEN_SIL
 
 VOICES = Path.home() / "Library/Application Support/Murmur/hd-voices"
-REF = next(iter(sorted(VOICES.glob("*.wav"))))
+_refs = sorted(VOICES.glob("*.wav"))
+if not _refs:
+    sys.exit(f"no HD reference voices in {VOICES} — add one (or run the starter-voices "
+             "fetch) before profiling.")
+REF = _refs[0]
 
 dev = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"device={dev}  ref={REF.name}")
