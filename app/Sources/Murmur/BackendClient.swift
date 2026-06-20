@@ -63,6 +63,16 @@ struct BackendClient {
         for try await line in bytes.lines { onLine(line) }
     }
 
+    /// Pre-load the HD model + a voice so the first read isn't a cold ~8s wait.
+    func warmChatterbox(voice: String) async {
+        var url = base.appending(path: "engines/chatterbox/warm")
+        url.append(queryItems: [URLQueryItem(name: "voice", value: voice)])
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 60
+        _ = try? await session.data(for: req)
+    }
+
     /// Download the curated starter reference voices.
     func fetchStarterVoices(onLine: @escaping (String) -> Void) async throws {
         var req = URLRequest(url: base.appending(path: "voices/hd/starters"))

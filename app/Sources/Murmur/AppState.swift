@@ -89,6 +89,20 @@ final class AppState: ObservableObject {
                                                            pitchCents: Float($0)) }.store(in: &cancellables)
         prefs.$volume.sink { [weak self] in self?.audio.set(volume: Float($0),
                                                             pitchCents: Float(self?.prefs.pitch ?? 0)) }.store(in: &cancellables)
+        // Pre-warm the HD model when the user switches to it / changes voice, so
+        // the first read isn't a cold ~8s wait.
+        prefs.$engine.dropFirst().sink { [weak self] in if $0 == "chatterbox" { self?.warmHD() } }.store(in: &cancellables)
+        prefs.$hdVoice.dropFirst().sink { [weak self] _ in
+            if self?.prefs.engine == "chatterbox" { self?.warmHD() }
+        }.store(in: &cancellables)
+    }
+
+    private var warming = false
+    func warmHD() {
+        guard hdInstalled, !warming else { return }
+        warming = true
+        let voice = prefs.hdVoice
+        Task { await backend.client.warmChatterbox(voice: voice); warming = false; refreshHD() }
     }
 
     /// On first run, copy the bundled open starter voices into the writable

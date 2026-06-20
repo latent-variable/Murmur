@@ -68,6 +68,7 @@ class ChatterboxTurboEngine:
         self.model = None
         self.device = "cpu"
         self.error: Optional[str] = None
+        self._cached_ref: Optional[str] = None  # voice whose conditioning is loaded
 
     def available(self) -> bool:
         """Are the heavy deps importable (without loading the model)?"""
@@ -134,6 +135,26 @@ class ChatterboxTurboEngine:
         except Exception:  # noqa: BLE001
             pass
 
+    def _prepare(self, ref_path: str) -> None:
+        """Compute the voice conditioning once and cache it. generate() then
+        reuses it instead of re-encoding the reference on every call."""
+        if self._cached_ref != ref_path:
+            self.model.prepare_conditionals(ref_path)
+            self._cached_ref = ref_path
+
+    def warm(self, ref_path: str) -> bool:
+        """Load the model and prepare a voice so the first real read is fast."""
+        if self.model is None and not self.load():
+            return False
+        try:
+            if ref_path and Path(ref_path).exists():
+                self._prepare(ref_path)
+                self.model.generate("Ready.")  # compile the graph for this voice
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("HD warm failed: %s", e)
+            return False
+
     def synth(self, text: str, ref_path: str, speed: float = 1.0) -> np.ndarray:
         """Clone the voice in ref_path and speak `text`. Returns float32 @ 24kHz.
         (Chatterbox has no speed knob; speed is honored by the Kokoro engine.)"""
@@ -141,7 +162,8 @@ class ChatterboxTurboEngine:
             raise RuntimeError(self.error or "HD engine not loaded")
         if not ref_path or not Path(ref_path).exists():
             raise RuntimeError("reference voice clip missing")
-        wav = self.model.generate(text, audio_prompt_path=ref_path)
+        self._prepare(ref_path)                 # cached; cheap after first call
+        wav = self.model.generate(text)         # reuse cached conditioning
         arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
         return arr
 

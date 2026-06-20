@@ -158,6 +158,31 @@ def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
     return segs
 
 
+def merge_for_hd(segs: list[tuple[str, float]], max_chars: int = 200,
+                 first_chars: int = 1) -> list[tuple[str, float]]:
+    """Chatterbox has a large fixed cost per generate() call AND generates at
+    ~real time, so chunk size trades start-latency vs per-call overhead:
+      - keep the FIRST chunk small so audio starts quickly (it streams while the
+        rest generates),
+      - merge the REST into bigger chunks (fewer calls = smoother, fewer gaps).
+    Breaks at paragraph gaps either way. Within a chunk Chatterbox makes its own
+    punctuation pauses."""
+    out: list[tuple[str, float]] = []
+    buf: list[str] = []
+    length = 0
+    limit = first_chars
+    for text, gap in segs:
+        buf.append(text)
+        length += len(text) + 1
+        if gap >= GAP_PARAGRAPH or length >= limit:
+            out.append((" ".join(buf), gap))
+            buf, length = [], 0
+            limit = max_chars   # bigger after the quick first chunk
+    if buf:
+        out.append((" ".join(buf), 0.0))
+    return out
+
+
 # --- engine ---------------------------------------------------------------------
 # onnxruntime execution-provider selection. CoreML routes to Apple GPU/ANE,
 # but for an 82M model like Kokoro it benchmarks ~even-to-slower than the
@@ -411,6 +436,17 @@ def _segment_synth(req: SynthReq):
     return lambda text: engine.synth(text, req.voice, req.speed, req.lang)
 
 
+@app.post("/engines/chatterbox/warm")
+def warm_chatterbox(voice: str = Query("")):
+    """Pre-load the HD model + a voice so the first read is fast. Called when
+    the user switches to the HD engine. Blocks until warm (~8s cold)."""
+    if not cb_engine.available():
+        raise HTTPException(503, "HD engine not installed")
+    ref = hd_voice_path(voice) if voice else None
+    ok = cb_engine.warm(str(ref) if ref else "")
+    return {"warm": ok, "loaded": cb_engine.model is not None, "voice": voice}
+
+
 @app.post("/voices/hd/starters")
 def fetch_starter_voices():
     """Download a few clean, openly-licensed reference voices (CMU ARCTIC,
@@ -467,6 +503,8 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         raise HTTPException(400, "empty text")
 
     segments = segment_text(req.text)
+    if req.engine == "chatterbox":
+        segments = merge_for_hd(segments)   # fewer, larger calls = smoother HD
     if not segments:
         raise HTTPException(400, "no speakable text")
     do_synth = _segment_synth(req)
