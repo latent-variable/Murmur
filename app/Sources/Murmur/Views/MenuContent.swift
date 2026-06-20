@@ -91,7 +91,7 @@ struct MenuContent: View {
                 .symbolEffect(.pulse, isActive: state.status == .reading)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Murmur").font(.headline)
-                Text(state.preparing ? "Preparing voice…" : state.status.label)
+                Text(state.preparing ? state.preparingDetail : state.status.label)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()

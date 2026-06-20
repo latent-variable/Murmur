@@ -41,6 +41,8 @@ final class AppState: ObservableObject {
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
     @Published var preparing = false   // synth requested, first audio not yet playing
+    @Published var preparingDetail = "Preparing voice…"
+    private var hdWarm = false          // HD model loaded since backend start
 
     /// The voice id for the currently selected engine.
     var activeVoice: String { prefs.engine == "chatterbox" ? prefs.hdVoice : prefs.voice }
@@ -177,6 +179,7 @@ final class AppState: ObservableObject {
         playingText = cleaned
         status = .reading
         preparing = true   // first audio not here yet (HD can take a few seconds)
+        preparingDetail = prepDetail()
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
         do {
             // Speed is applied at playback (real-time, both engines), so the
@@ -185,8 +188,13 @@ final class AppState: ObservableObject {
                                                 speed: 1.0, pauseScale: prefs.pauseScale,
                                                 engine: prefs.engine) { [weak self] data in
                 guard let self, gen == self.generation else { return }
-                self.preparing = false
-                self.audio.feed(data)
+                self.audio.feed(data)   // scheduling is thread-safe
+                // @Published writes MUST be on the main actor (the stream
+                // callback runs off-main); doing it here crashed the menu bar.
+                Task { @MainActor in
+                    if self.preparing { self.preparing = false }
+                    if self.prefs.engine == "chatterbox" { self.hdWarm = true }
+                }
             }
             // drain
             while gen == generation && audio.hasQueued && status == .reading {
@@ -217,6 +225,14 @@ final class AppState: ObservableObject {
         Preprocess.clean(raw, options: Preprocess.options(for: prefs.profile), custom: prefs.customRules)
     }
 
+    /// What to show while waiting for first audio — flags the slow HD cold-load.
+    private func prepDetail() -> String {
+        if prefs.engine == "chatterbox" {
+            return hdWarm ? "Generating HD audio…" : "Loading HD voice — first use, ~10 sec…"
+        }
+        return "Preparing voice…"
+    }
+
     // MARK: - transport
 
     func pause() { if status == .reading { audio.pause(); status = .paused } }
@@ -239,6 +255,7 @@ final class AppState: ObservableObject {
             let gen = generation
             status = .reading
             preparing = true
+            preparingDetail = prepDetail()
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
@@ -246,8 +263,8 @@ final class AppState: ObservableObject {
             try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
                                                 pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
                 guard let self, gen == self.generation else { return }
-                self.preparing = false
                 self.audio.feed(d)
+                Task { @MainActor in if self.preparing { self.preparing = false } }
             }
             while gen == generation && audio.hasQueued { try? await Task.sleep(nanoseconds: 150_000_000) }
             if gen == generation { preparing = false; status = .idle }
@@ -267,6 +284,7 @@ final class AppState: ObservableObject {
         Task {
             let e = await backend.client.engines()
             hdInstalled = e.chatterbox?.installed ?? false
+            hdWarm = e.chatterbox?.loaded ?? false
             hdVoices = await backend.client.voices(engine: "chatterbox")
             if prefs.hdVoice.isEmpty, let first = hdVoices.first { prefs.hdVoice = first.id }
         }
