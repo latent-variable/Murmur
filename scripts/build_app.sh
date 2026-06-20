@@ -52,10 +52,14 @@ fi
 # Prefer a stable self-signed identity (survives reinstalls → Accessibility
 # grant persists). Falls back to ad-hoc. Set one up with scripts/setup_signing.sh.
 SIGN_ID="Murmur Local Signing"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
-  echo "[build] signing with '$SIGN_ID' (stable identity)"
-  codesign --force --deep --sign "$SIGN_ID" "$APP" >/dev/null 2>&1 \
-    || { echo "[build] stable signing failed, falling back to ad-hoc"; codesign --force --deep --sign - "$APP" >/dev/null 2>&1; }
+SIGN_KC="$HOME/Library/Keychains/murmur-signing.keychain-db"
+[ -f "$SIGN_KC" ] && security unlock-keychain -p "murmur-local" "$SIGN_KC" 2>/dev/null || true
+if [ -f "$SIGN_KC" ] && security find-certificate -c "$SIGN_ID" "$SIGN_KC" >/dev/null 2>&1; then
+  echo "[build] signing with '$SIGN_ID' (stable identity — Accessibility grant persists)"
+  if ! codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" >/dev/null 2>&1; then
+    echo "[build] stable signing failed, falling back to ad-hoc"
+    codesign --force --deep --sign - "$APP" >/dev/null 2>&1
+  fi
 else
   echo "[build] ad-hoc signing (run scripts/setup_signing.sh for a persistent identity)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"

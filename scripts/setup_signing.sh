@@ -1,29 +1,40 @@
 #!/usr/bin/env bash
-# One-time: create a stable self-signed code-signing identity so Murmur keeps a
-# constant code identity across rebuilds. macOS ties the Accessibility grant to
-# that identity, so granting once survives every future update — no more
-# re-granting after each reinstall.
+# One-time: create a STABLE self-signed code-signing identity so every Murmur
+# build shares one code identity. macOS then ties your Accessibility grant to
+# the certificate, not the binary hash — so it survives every rebuild. Grant
+# once, never again.
 #
-# Run this ONCE (it may prompt for your login keychain password):
-#   bash scripts/setup_signing.sh
-# Then rebuild: bash scripts/build_app.sh  (it auto-detects the identity).
+# Uses a DEDICATED keychain with its own password (not your login keychain), so
+# it needs no input from you and touches none of your other keys.
 #
-# Remove later with: scripts/setup_signing.sh --remove
+#   bash scripts/setup_signing.sh            # set up
+#   bash scripts/setup_signing.sh --remove   # undo
 set -euo pipefail
 
 NAME="Murmur Local Signing"
-KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+SIGN_KC="$HOME/Library/Keychains/murmur-signing.keychain-db"
+KCPW="murmur-local"   # password for THIS keychain only
+
+current_keychains() { security list-keychains -d user | sed 's/^[[:space:]]*//; s/"//g'; }
 
 if [ "${1:-}" = "--remove" ]; then
-  security delete-identity -c "$NAME" "$KEYCHAIN" 2>/dev/null || true
-  security delete-certificate -c "$NAME" "$KEYCHAIN" 2>/dev/null || true
-  echo "removed '$NAME'"; exit 0
+  # drop from search list, then delete
+  REMAIN=(); while IFS= read -r k; do [ "$k" = "$SIGN_KC" ] || REMAIN+=("$k"); done < <(current_keychains)
+  [ ${#REMAIN[@]} -gt 0 ] && security list-keychains -d user -s "${REMAIN[@]}" >/dev/null 2>&1 || true
+  security delete-keychain "$SIGN_KC" 2>/dev/null || true
+  echo "removed signing keychain"; exit 0
 fi
 
-if security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "$NAME"; then
-  echo "identity '$NAME' already present — nothing to do."
+if [ -f "$SIGN_KC" ] && security find-certificate -c "$NAME" "$SIGN_KC" >/dev/null 2>&1; then
+  echo "✓ '$NAME' already set up. Rebuild with: bash scripts/build_app.sh"
   exit 0
 fi
+
+echo "[sign] creating dedicated signing keychain"
+security delete-keychain "$SIGN_KC" 2>/dev/null || true
+security create-keychain -p "$KCPW" "$SIGN_KC"
+security set-keychain-settings "$SIGN_KC"                 # no auto-lock timeout
+security unlock-keychain -p "$KCPW" "$SIGN_KC"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 cat > "$TMP/cfg" <<CNF
@@ -37,31 +48,38 @@ CN = $NAME
 basicConstraints = critical,CA:false
 keyUsage = critical,digitalSignature
 extendedKeyUsage = critical,codeSigning
+subjectKeyIdentifier = hash
 CNF
 
-echo "[sign] generating self-signed code-signing cert"
+echo "[sign] generating self-signed code-signing certificate"
 openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
   -days 3650 -nodes -config "$TMP/cfg" >/dev/null 2>&1
-# legacy PKCS12 encryption so macOS Security can import it
 openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/id.p12" \
   -passout pass:murmur -name "$NAME" \
   -legacy -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 >/dev/null 2>&1
 
-echo "[sign] importing into login keychain"
-security import "$TMP/id.p12" -k "$KEYCHAIN" -P murmur -T /usr/bin/codesign -A
+echo "[sign] importing + authorizing codesign (non-interactive)"
+security import "$TMP/id.p12" -k "$SIGN_KC" -P murmur -T /usr/bin/codesign -A >/dev/null
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPW" "$SIGN_KC" >/dev/null 2>&1
 
-# Critical: let codesign use the key without an interactive prompt.
-# This needs the login keychain password.
-echo "[sign] granting codesign access to the key (enter your login keychain password if asked)"
-security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN" >/dev/null 2>&1 \
-  || security set-key-partition-list -S apple-tool:,apple: "$KEYCHAIN" 2>/dev/null \
-  || echo "[sign] note: if codesign still prompts, run Keychain Access and set the key to 'Allow all applications'."
+# add the signing keychain to the search list (keep existing ones)
+KCS=(); while IFS= read -r k; do [ -n "$k" ] && KCS+=("$k"); done < <(current_keychains)
+INSEARCH=0; for k in "${KCS[@]}"; do [ "$k" = "$SIGN_KC" ] && INSEARCH=1; done
+[ "$INSEARCH" = 0 ] && security list-keychains -d user -s "${KCS[@]}" "$SIGN_KC" >/dev/null
 
+# Verify by test-signing a real binary (find-identity hides untrusted
+# self-signed certs, so it's not a usable check).
+VTMP="$(mktemp -d)"; cp /bin/echo "$VTMP/echo"
 echo
-if security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "$NAME"; then
-  echo "✓ '$NAME' ready. Rebuild with: bash scripts/build_app.sh"
+if codesign --force --sign "$NAME" --keychain "$SIGN_KC" "$VTMP/echo" 2>/dev/null \
+   && codesign -dvv "$VTMP/echo" 2>&1 | grep -q "Authority=$NAME"; then
+  rm -rf "$VTMP"
+  echo "✓ '$NAME' ready (dedicated keychain, no prompts)."
+  echo "  Rebuild + reinstall once, grant Accessibility once, and it sticks"
+  echo "  across every future build:"
+  echo "    bash scripts/build_app.sh && cp -R dist/Murmur.app /Applications/"
 else
-  echo "△ Imported, but not listed as a codesigning identity yet. Open Keychain"
-  echo "  Access → find '$NAME' → right-click the private key → 'Get Info' →"
-  echo "  Access Control → 'Allow all applications to access this item'. Then rebuild."
+  rm -rf "$VTMP"
+  echo "✗ setup failed — codesign could not use the identity."
+  exit 1
 fi
