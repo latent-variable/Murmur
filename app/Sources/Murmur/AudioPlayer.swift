@@ -15,6 +15,9 @@ final class AudioPlayer {
     // slow chunks (HD generates near real-time) don't cause silence gaps.
     private var primeFrames: AVAudioFrameCount = 8400  // ~0.35s default
     private var primed = false
+    // User paused. While set, incoming chunks still buffer but never (re)start
+    // the node — otherwise the next streamed chunk silently un-pauses playback.
+    private var paused = false
 
     var onFinished: (() -> Void)?
 
@@ -55,6 +58,7 @@ final class AudioPlayer {
     /// Start playback now even if the cushion isn't full (call when the stream
     /// ends, so short clips below the cushion still play).
     func flush() {
+        if paused { return }
         if !primed && scheduledFrames > 0 {
             primed = true
             player.play()
@@ -89,7 +93,9 @@ final class AudioPlayer {
             guard let self else { return }
             self.scheduledFrames -= buffer.frameLength
         }
-        // Start once the cushion is full; after that, keep the node playing.
+        // Start once the cushion is full; after that, keep the node playing —
+        // unless the user paused, in which case keep buffering but stay stopped.
+        if paused { return }
         if !primed {
             if scheduledFrames >= primeFrames { primed = true; player.play() }
         } else if !player.isPlaying {
@@ -97,16 +103,19 @@ final class AudioPlayer {
         }
     }
 
-    func pause() { player.pause() }
+    func pause() { paused = true; player.pause() }
     func resume() {
+        paused = false
         if !engine.isRunning { try? engine.start() }
-        player.play()
+        if scheduledFrames > 0 { primed = true; player.play() }
+        // nothing queued yet (paused during cushion fill) — feed() resumes it
     }
 
     func stop() {
         player.stop()
         player.reset()
         primed = false
+        paused = false
         leftoverByte = nil
         scheduledFrames = 0
     }

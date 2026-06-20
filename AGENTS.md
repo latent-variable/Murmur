@@ -57,8 +57,15 @@ Key facts an agent must keep straight:
   are CMU ARCTIC (free); `fetch_hd_voices.sh` / `/voices/hd/starters` fetch them.
 - Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
   not the backend — Chatterbox has no speed knob, and this makes speed real-time
-  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 2s HD) before
-  starting, so near-real-time HD generation doesn't underrun into silence.
+  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 0.8s HD)
+  before starting, so generation jitter doesn't underrun into silence.
+- HD chunking is buffer-aware, not fixed-size. `merge_for_hd` in `server.py` sizes
+  each Chatterbox chunk from a measured cost model — `generate(T sec audio) ≈
+  0.8 + 0.49·T` on MPS — so its generate time can't outrun the audio already
+  queued. The first chunk is small (first audio ~2.2s); later chunks grow as the
+  buffer banks, keeping every chunk RTF < 1. This is what makes HD latency
+  consistent; if you touch the cost model, re-run `backend/tools/validate_hd_stream.py`
+  (real model) and the `TestHDChunking` suite. Profile with `tools/profile_hd.py`.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
