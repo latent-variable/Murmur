@@ -23,6 +23,10 @@ final class AudioPlayer {
     // User paused. While set, incoming chunks still buffer but never (re)start
     // the node — otherwise the next streamed chunk silently un-pauses playback.
     private var paused = false
+    // Stream finished (flush called). Lets resume() tell "paused mid-stream"
+    // (let feed re-prime, preserving the cushion) from "paused after the stream
+    // ended" (play the sub-cushion remainder now, since no more audio is coming).
+    private var ended = false
 
     var onFinished: (() -> Void)?
 
@@ -50,7 +54,7 @@ final class AudioPlayer {
         stop()
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
-        lock.withLock { primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000); primed = false }
+        lock.withLock { primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000); primed = false; ended = false }
         do {
             if !engine.isRunning { try engine.start() }
             // engine running but the node waits for the cushion (see feed/flush)
@@ -64,6 +68,7 @@ final class AudioPlayer {
     func flush() {
         var shouldPlay = false
         lock.withLock {
+            ended = true
             if !paused && !primed && scheduledFrames > 0 { primed = true; shouldPlay = true }
         }
         if shouldPlay { player.play() }
@@ -117,16 +122,24 @@ final class AudioPlayer {
     }
     func resume() {
         var shouldPlay = false
-        lock.withLock { paused = false; if scheduledFrames > 0 { primed = true; shouldPlay = true } }
+        lock.withLock {
+            paused = false
+            if primed {
+                shouldPlay = true                       // was playing before pause
+            } else if ended && scheduledFrames > 0 {
+                primed = true; shouldPlay = true        // stream done: play remainder
+            }
+            // else paused mid-prime, stream still live: leave unprimed so feed()
+            // refills the cushion before starting — avoids an undersized buffer.
+        }
         if !engine.isRunning { try? engine.start() }
         if shouldPlay { player.play() }
-        // nothing queued yet (paused during cushion fill) — feed() resumes it
     }
 
     func stop() {
         player.stop()
         player.reset()
-        lock.withLock { primed = false; paused = false; scheduledFrames = 0 }
+        lock.withLock { primed = false; paused = false; ended = false; scheduledFrames = 0 }
         leftoverByte = nil
     }
 
