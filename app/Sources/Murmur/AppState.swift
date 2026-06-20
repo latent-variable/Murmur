@@ -50,13 +50,16 @@ final class AppState: ObservableObject {
     /// One id space across engines for the unified voice picker.
     var currentVoiceId: String { "\(prefs.engine):\(activeVoice)" }
 
-    /// Kokoro voices (grouped by language) + HD voices (own section), as one list.
+    /// Kokoro voices (grouped by language) + HD voices (own section), as one
+    /// list. HD voices appear only once the HD engine is installed.
     var combinedVoices: [EngineVoice] {
         var out: [EngineVoice] = voices.map {
             EngineVoice(engine: "kokoro", voiceId: $0.id, label: $0.shortName, section: $0.lang_label)
         }
-        out += hdVoices.map {
-            EngineVoice(engine: "chatterbox", voiceId: $0.id, label: $0.id, section: "✨ HD Engine")
+        if hdInstalled {
+            out += hdVoices.map {
+                EngineVoice(engine: "chatterbox", voiceId: $0.id, label: $0.id, section: "✨ HD Engine")
+            }
         }
         return out
     }

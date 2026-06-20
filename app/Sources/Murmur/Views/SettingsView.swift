@@ -88,78 +88,34 @@ private struct VoiceTab: View {
 private struct EngineTab: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var prefs: Prefs
+    @StateObject private var recorder = VoiceRecorder()
     @State private var installing = false
     @State private var installLog = ""
     @State private var showImporter = false
     @State private var newName = ""
+    @State private var fetching = false
+    @State private var fetchLog = ""
+
+    private var nameReady: Bool { !newName.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         Form {
             Section("Voice engine") {
                 Picker("Engine", selection: $prefs.engine) {
                     Text("Kokoro — instant, 54 voices").tag("kokoro")
-                    Text("Chatterbox HD — higher quality, cloned voices").tag("chatterbox")
+                    Text("Chatterbox HD — natural, cloned voices").tag("chatterbox")
                 }
                 .pickerStyle(.radioGroup)
-                Text("Kokoro runs on CPU and starts instantly. Chatterbox HD uses the GPU for noticeably more natural speech, with a few seconds of startup. Switch any time.")
+                Text("Kokoro runs on CPU and starts instantly. Chatterbox HD uses the GPU for noticeably more natural speech (a few seconds of startup), and lets you add your own voices by cloning a short clip. Switch any time — or just pick a voice from the dropdown.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             if prefs.engine == "chatterbox" {
-                if !state.hdInstalled {
-                    Section("Enable HD") {
-                        Text("HD mode downloads its engine (~1.3 GB, one time) into Application Support — it is not bundled, so the app stays small.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if installing {
-                            ProgressView().controlSize(.small)
-                            ScrollView { Text(installLog).font(.caption.monospaced())
-                                .frame(maxWidth: .infinity, alignment: .leading) }
-                                .frame(height: 120).border(.quaternary)
-                        } else {
-                            Button("Download & enable HD") { startInstall() }
-                                .buttonStyle(.borderedProminent)
-                        }
-                    }
-                } else {
-                    Section("HD voices (cloned)") {
-                        if state.hdVoices.isEmpty {
-                            Text("No reference voices yet. Add a 10-20s clean audio clip of any voice you have the rights to use.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Picker("Voice", selection: $prefs.hdVoice) {
-                            ForEach(state.hdVoices) { v in Text(v.id).tag(v.id) }
-                            if state.hdVoices.isEmpty { Text("—").tag("") }
-                        }
-                        HStack {
-                            TextField("New voice name", text: $newName).frame(width: 160)
-                            Button("Add reference clip…") { showImporter = true }
-                                .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
-                            Spacer()
-                            Button("Test voice") { state.testVoice() }
-                        }
-                        Button {
-                            installing = true; installLog = "fetching starter voices…\n"
-                            state.fetchStarterVoices { line in
-                                installLog += line + "\n"
-                                if line.contains("[refreshed]") { installing = false }
-                            }
-                        } label: { Label("Get free starter voices (CMU ARCTIC)", systemImage: "square.and.arrow.down") }
-                            .controlSize(.small).disabled(installing)
-                        if installing && installLog.contains("fetching starter") {
-                            ScrollView { Text(installLog).font(.caption.monospaced())
-                                .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 70)
-                        }
-                        if !prefs.hdVoice.isEmpty {
-                            Button(role: .destructive) { state.deleteHDVoice(prefs.hdVoice) } label: {
-                                Label("Delete \"\(prefs.hdVoice)\"", systemImage: "trash")
-                            }.controlSize(.small)
-                        }
-                    }
-                    Section {
-                        Label("HD audio is watermarked (Resemble Perth) to mark it as AI-generated. Only clone voices you have permission to use.",
-                              systemImage: "checkmark.shield")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                if !state.hdInstalled { enableSection } else { voicesSection; addSection; ethicsSection }
+            } else {
+                Section {
+                    Label("Custom voice cloning lives in the Chatterbox HD engine. Select it above to add your own voices.",
+                          systemImage: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -175,11 +131,91 @@ private struct EngineTab: View {
         }
     }
 
-    private func startInstall() {
-        installing = true; installLog = ""
-        state.installHD { line in
-            installLog += line + "\n"
-            if line.contains("HD ready") { installing = false }
+    // MARK: enable / download
+    private var enableSection: some View {
+        Section("Enable HD") {
+            Text("HD mode downloads its engine once (~1.3 GB) into Application Support. It is not bundled, so the app stays small.")
+                .font(.caption).foregroundStyle(.secondary)
+            if installing {
+                HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
+                ScrollView { Text(installLog).font(.caption.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 110).border(.quaternary)
+            } else {
+                Button("Download & enable HD") {
+                    installing = true; installLog = ""
+                    state.installHD { line in installLog += line + "\n"; if line.contains("HD ready") { installing = false } }
+                }.buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    // MARK: voice list
+    private var voicesSection: some View {
+        Section("Your HD voices") {
+            if state.hdVoices.isEmpty {
+                Text("No voices yet. Add one below, or get the free starter pack.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(state.hdVoices) { v in
+                HStack(spacing: 8) {
+                    Image(systemName: prefs.hdVoice == v.id ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(prefs.hdVoice == v.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    Text(v.id)
+                    Spacer()
+                    Button { prefs.engine = "chatterbox"; prefs.hdVoice = v.id; state.testVoice() } label: {
+                        Image(systemName: "play.circle")
+                    }.buttonStyle(.borderless).help("Test")
+                    Button(role: .destructive) { state.deleteHDVoice(v.id) } label: {
+                        Image(systemName: "trash")
+                    }.buttonStyle(.borderless).help("Delete")
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { prefs.engine = "chatterbox"; prefs.hdVoice = v.id }
+            }
+        }
+    }
+
+    // MARK: add a voice
+    private var addSection: some View {
+        Section("Add a custom voice") {
+            TextField("Voice name (e.g. Sam)", text: $newName)
+            HStack {
+                Button { showImporter = true } label: { Label("Import audio file…", systemImage: "square.and.arrow.down") }
+                    .disabled(!nameReady || recorder.recording)
+                Button {
+                    recorder.toggle { url in
+                        if let url { state.addHDVoice(from: url, name: newName); newName = "" }
+                    }
+                } label: {
+                    Label(recorder.recording ? String(format: "Stop  %.0fs", recorder.elapsed) : "Record from mic",
+                          systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle")
+                }
+                .disabled(!nameReady && !recorder.recording)
+                .tint(recorder.recording ? .red : nil)
+            }
+            if recorder.recording {
+                ProgressView(value: recorder.elapsed, total: recorder.maxSeconds)
+                Text("Speak naturally — it auto-stops at \(Int(recorder.maxSeconds))s.").font(.caption2).foregroundStyle(.secondary)
+            }
+            if recorder.denied {
+                Text("Microphone access denied. Enable it in System Settings ▸ Privacy ▸ Microphone.")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            Text("Tip: 10–20 seconds of one clear voice, no music or background noise, gives the best clone.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button {
+                fetching = true; fetchLog = "fetching…\n"
+                state.fetchStarterVoices { l in fetchLog += l + "\n"; if l.contains("[refreshed]") { fetching = false } }
+            } label: { Label("Get free starter voices (CMU ARCTIC)", systemImage: "person.3") }
+                .controlSize(.small).disabled(fetching)
+            if fetching { ProgressView().controlSize(.small) }
+        }
+    }
+
+    private var ethicsSection: some View {
+        Section {
+            Label("HD audio is watermarked (Resemble Perth) to mark it AI-generated. Only clone voices you have permission to use.",
+                  systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
         }
     }
 }

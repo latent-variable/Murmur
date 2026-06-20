@@ -28,5 +28,7 @@
 	<string>Murmur simulates Copy to capture selected text when the Accessibility API is unavailable.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Local-first TTS. No cloud, no tracking.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Murmur records a short clip only when you choose to create a custom HD voice from your microphone. Nothing is sent anywhere.</string>
 </dict>
 </plist>
