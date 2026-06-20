@@ -280,6 +280,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    func fetchStarterVoices(onLine: @escaping (String) -> Void) {
+        Task {
+            do { try await backend.client.fetchStarterVoices { l in Task { @MainActor in onLine(l) } } }
+            catch { onLine("error: \(error.localizedDescription)") }
+            refreshHD()
+            onLine("[refreshed]")
+        }
+    }
+
     func deleteHDVoice(_ id: String) {
         try? FileManager.default.removeItem(at: hdVoicesDir.appending(path: "\(id).wav"))
         refreshHD()

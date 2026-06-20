@@ -135,6 +135,18 @@ private struct EngineTab: View {
                             Spacer()
                             Button("Test voice") { state.testVoice() }
                         }
+                        Button {
+                            installing = true; installLog = "fetching starter voices…\n"
+                            state.fetchStarterVoices { line in
+                                installLog += line + "\n"
+                                if line.contains("[refreshed]") { installing = false }
+                            }
+                        } label: { Label("Get free starter voices (CMU ARCTIC)", systemImage: "square.and.arrow.down") }
+                            .controlSize(.small).disabled(installing)
+                        if installing && installLog.contains("fetching starter") {
+                            ScrollView { Text(installLog).font(.caption.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 70)
+                        }
                         if !prefs.hdVoice.isEmpty {
                             Button(role: .destructive) { state.deleteHDVoice(prefs.hdVoice) } label: {
                                 Label("Delete \"\(prefs.hdVoice)\"", systemImage: "trash")

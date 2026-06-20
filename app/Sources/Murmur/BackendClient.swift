@@ -63,6 +63,15 @@ struct BackendClient {
         for try await line in bytes.lines { onLine(line) }
     }
 
+    /// Download the curated starter reference voices.
+    func fetchStarterVoices(onLine: @escaping (String) -> Void) async throws {
+        var req = URLRequest(url: base.appending(path: "voices/hd/starters"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        let (bytes, _) = try await session.bytes(for: req)
+        for try await line in bytes.lines { onLine(line) }
+    }
+
     private func synthRequest(_ text: String, voice: String, speed: Double,
                               pauseScale: Double, engine: String, wav: Bool) -> URLRequest {
         var url = base.appending(path: "synthesize")

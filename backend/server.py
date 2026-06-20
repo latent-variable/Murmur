@@ -411,6 +411,55 @@ def _segment_synth(req: SynthReq):
     return lambda text: engine.synth(text, req.voice, req.speed, req.lang)
 
 
+@app.post("/voices/hd/starters")
+def fetch_starter_voices():
+    """Download a few clean, openly-licensed reference voices (CMU ARCTIC,
+    free to use) into hd-voices. Streams progress. Uses stdlib only."""
+    import urllib.request
+    base = "http://festvox.org/cmu_arctic/cmu_arctic"
+    # (voice id, cmu speaker, description)
+    voices = [
+        ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
+        ("Ben", "bdl", "US male"), ("Angus", "awb", "Scottish male"),
+        ("Ravi", "ksp", "Indian male"),
+    ]
+    dest = hd_voices_dir()
+
+    def concat_wavs(paths: list[Path], out: Path) -> None:
+        frames = b""
+        params = None
+        for p in paths:
+            with wave.open(str(p), "rb") as w:
+                params = params or w.getparams()
+                frames += w.readframes(w.getnframes())
+        with wave.open(str(out), "wb") as w:
+            w.setnchannels(params.nchannels); w.setsampwidth(params.sampwidth)
+            w.setframerate(params.framerate); w.writeframes(frames)
+
+    def gen() -> Iterator[bytes]:
+        import tempfile
+        for vid, spk, desc in voices:
+            out = dest / f"{vid}.wav"
+            if out.exists():
+                yield f"skip {vid} (exists)\n".encode(); continue
+            yield f"fetching {vid} ({desc})...\n".encode()
+            tmp = Path(tempfile.mkdtemp())
+            clips = []
+            try:
+                for n in ("0001", "0002", "0003", "0004", "0005"):
+                    url = f"{base}/cmu_us_{spk}_arctic/wav/arctic_a{n}.wav"
+                    cp = tmp / f"{n}.wav"
+                    urllib.request.urlretrieve(url, cp)
+                    clips.append(cp)
+                concat_wavs(clips, out)
+                yield f"  installed {vid}\n".encode()
+            except Exception as e:  # noqa: BLE001
+                yield f"  failed {vid}: {e}\n".encode()
+        yield b"[done]\n"
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
 @app.post("/synthesize")
 def synthesize(req: SynthReq, format: str = Query("pcm")):
     if not req.text.strip():
