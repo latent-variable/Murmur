@@ -57,8 +57,15 @@ Key facts an agent must keep straight:
   are CMU ARCTIC (free); `fetch_hd_voices.sh` / `/voices/hd/starters` fetch them.
 - Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
   not the backend — Chatterbox has no speed knob, and this makes speed real-time
-  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 2s HD) before
-  starting, so near-real-time HD generation doesn't underrun into silence.
+  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 0.8s HD)
+  before starting, so generation jitter doesn't underrun into silence.
+- HD chunking is buffer-aware, not fixed-size. `merge_for_hd` in `server.py` sizes
+  each Chatterbox chunk from a measured cost model — `generate(T sec audio) ≈
+  0.8 + 0.49·T` on MPS — so its generate time can't outrun the audio already
+  queued. The first chunk is small (first audio ~2.2s); later chunks grow as the
+  buffer banks, keeping every chunk RTF < 1. This is what makes HD latency
+  consistent; if you touch the cost model, re-run `backend/tools/validate_hd_stream.py`
+  (real model) and the `TestHDChunking` suite. Profile with `tools/profile_hd.py`.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
@@ -142,6 +149,23 @@ Accessibility permission and a real focused app; audio needs an output device.
   Don't hand-maintain lists the CLI/`/voices` can print live.
 - If you change the backend payload shape, update `BackendClient` and
   `AudioPlayer` together and re-run the validation list above.
+
+### Review cycle (required before merge)
+
+Every PR goes through automated review (Gemini Code Assist + the repo reviewer).
+The loop is severity-gated:
+
+- **High-priority findings are blocking.** While any review round returns even a
+  single high-priority item, you must address **every** item raised that round
+  (high *and* medium), push, and request another review. Repeat until a full
+  round comes back with **zero high-priority items**. Don't merge, and don't
+  stop the loop, while a high is outstanding.
+- **Medium / low are judgment calls.** Once no highs remain, you may use
+  judgment on the mediums (fix, or note why not) and merge.
+- Re-request a review with a `/gemini review` PR comment after each push, and
+  confirm the new review's `commit_id` matches `HEAD` before reading its verdict
+  — Gemini sometimes reports against an earlier commit.
+- Reply on the PR each round listing what was addressed.
 
 ## Releases
 

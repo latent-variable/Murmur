@@ -158,28 +158,120 @@ def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
     return segs
 
 
-def merge_for_hd(segs: list[tuple[str, float]], max_chars: int = 200,
-                 first_chars: int = 1) -> list[tuple[str, float]]:
-    """Chatterbox has a large fixed cost per generate() call AND generates at
-    ~real time, so chunk size trades start-latency vs per-call overhead:
-      - keep the FIRST chunk small so audio starts quickly (it streams while the
-        rest generates),
-      - merge the REST into bigger chunks (fewer calls = smoother, fewer gaps).
-    Breaks at paragraph gaps either way. Within a chunk Chatterbox makes its own
-    punctuation pauses."""
+# Chatterbox Turbo cost model, measured on Apple-Silicon MPS (2nd-run, synced):
+#   generate(T seconds of audio) ≈ HD_GEN_FIXED  (s3gen vocoder floor, per call)
+#                                 + HD_GEN_PER_SEC * T   (AR decode + vocode)
+# so a chunk's generate stays FASTER than its playback once it holds more than
+# ~1.6s of audio. Speech runs ~HD_CHARS_PER_SEC chars/sec.
+HD_CHARS_PER_SEC = 17.0
+HD_GEN_FIXED = 0.8         # vocoder floor per generate() call
+HD_GEN_PER_SEC = 0.49     # marginal generate cost per second of audio
+HD_FIRST_SECONDS = 2.8    # first chunk floor: sets the buffer floor T₀ and very
+                          # nearly covers any later chunk's generate. First audio
+                          # lands ~2.2s.
+HD_MIN_SECONDS = 1.8      # drain-free floor for later chunks: above the RTF=1
+                          # breakeven (~1.6s), so each still banks slack
+HD_MAX_SECONDS = 6.0      # target ceiling (keeps long runs responsive)
+HD_MAX_CHARS = 68         # cap ONE sentence (comma-preferring) so gen(sentence)
+                          # ≤ gen at the first-chunk floor T₀ — no single sentence
+                          # can outrun the initial banked buffer
+HD_SAFETY_SECONDS = 0.3   # size chunks to finish generating this far AHEAD of
+                          # the buffer draining, so MPS/CPU jitter can't underrun
+
+
+def _hd_gen_seconds(audio_seconds: float) -> float:
+    return HD_GEN_FIXED + HD_GEN_PER_SEC * audio_seconds
+
+
+def _split_long_for_hd(text: str, gap: float) -> list[tuple[str, float]]:
+    """Break a single over-long sentence into <=HD_MAX_CHARS pieces, preferring
+    comma boundaries then spaces, so no one chunk's generate can outrun the
+    playback buffer. Inner pieces get gap 0 (no pause — still one sentence); the
+    last piece keeps the sentence's real trailing gap."""
+    if len(text) <= HD_MAX_CHARS:
+        return [(text, gap)]
+    words = text.split()
+    pieces: list[str] = []
+    line = ""
+    for w in words:
+        cand = f"{line} {w}".strip()
+        if len(cand) > HD_MAX_CHARS and line:
+            pieces.append(line)
+            line = w
+        else:
+            line = cand
+        if line.endswith((",", ";", ":")) and len(line) >= HD_MAX_CHARS * 0.6:
+            pieces.append(line)   # clean break at a clause boundary
+            line = ""
+    if line:
+        pieces.append(line)
+    return [(p, gap if i == len(pieces) - 1 else 0.0) for i, p in enumerate(pieces)]
+
+
+def merge_for_hd(segs: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Merge sentence-level segments into HD chunks, sized so the player buffer
+    never drains while the next chunk generates.
+
+    Budget-aware greedy scheduler: it tracks `banked` — the seconds of audio
+    queued when the NEXT chunk starts generating — and caps each chunk so its
+    generate time can't exceed what's banked. The first chunk is small (fast
+    first audio); chunks grow as the buffer banks, then settle. Provably no
+    underrun (each chunk's gen ≤ banked buffer). Whole sentences stay together;
+    paragraph gaps force a break and keep their silence between chunks."""
+    segs = [p for text, gap in segs for p in _split_long_for_hd(text, gap)]
     out: list[tuple[str, float]] = []
-    buf: list[str] = []
+    buf: list[tuple[str, float]] = []
     length = 0
-    limit = first_chars
+    banked = 0.0
+    target_s = HD_FIRST_SECONDS
+    first = True
+
+    def flush() -> None:
+        nonlocal buf, length, banked, target_s, first
+        if not buf:
+            return
+        text = " ".join(t for t, _ in buf)
+        # Trailing gap = the LARGEST gap among the merged segments, not just the
+        # last. When a short paragraph/line is absorbed into a chunk, its longer
+        # pause is preserved at the chunk boundary instead of being dropped.
+        # (Extra silence only deepens the buffer — it can't cause an underrun.)
+        out.append((text, max(g for _, g in buf)))
+        audio_s = len(text) / HD_CHARS_PER_SEC
+        if first:
+            banked = audio_s                # playback starts as this chunk lands
+            first = False
+        else:
+            banked = max(0.0, banked - _hd_gen_seconds(audio_s)) + audio_s
+        # largest next chunk whose generate fits inside the banked buffer, with a
+        # jitter margin so it lands ahead of the buffer draining (not at the wire)
+        safe = (banked - HD_GEN_FIXED - HD_SAFETY_SECONDS) / HD_GEN_PER_SEC
+        target_s = min(HD_MAX_SECONDS, max(HD_MIN_SECONDS, safe))
+        buf, length = [], 0
+
+    # Gap-free invariant: the player buffer only grows once playback starts
+    # (every chunk ≥ ~1.6s audio nets positive), so its floor is banked₀ = T₀,
+    # the FIRST chunk's duration. Two rules make it hold for any input:
+    #   1. never flush the first chunk below the minimum — it sets that floor;
+    #   2. size every later chunk to target_s = gen⁻¹(banked), so its generate
+    #      time can't exceed the buffer already queued.
+    first_min = HD_FIRST_SECONDS * HD_CHARS_PER_SEC   # floor for chunk 0 (T₀)
+    drain_min = HD_MIN_SECONDS * HD_CHARS_PER_SEC     # drain-free floor after
+    ceil_chars = HD_MAX_SECONDS * HD_CHARS_PER_SEC
     for text, gap in segs:
-        buf.append(text)
-        length += len(text) + 1
-        if gap >= GAP_PARAGRAPH or length >= limit:
-            out.append((" ".join(buf), gap))
-            buf, length = [], 0
-            limit = max_chars   # bigger after the quick first chunk
-    if buf:
-        out.append((" ".join(buf), 0.0))
+        seglen = len(text) + 1
+        # A chunk may flush only past its floor: the first chunk past first_min
+        # (so T₀ covers any later chunk's generate), later chunks past the small
+        # drain-free floor (so they never drain the buffer). Below the floor,
+        # short adjacent sentences / paragraphs merge instead of shipping tiny.
+        floor = drain_min if out else first_min
+        if buf and length >= floor and (
+                length + seglen > target_s * HD_CHARS_PER_SEC or length + seglen > ceil_chars):
+            flush()
+        buf.append((text, gap))
+        length += seglen
+        if gap >= GAP_PARAGRAPH and length >= floor:
+            flush()
+    flush()
     return out
 
 

@@ -213,7 +213,7 @@ final class AppState: ObservableObject {
         preparing = true   // first audio not here yet (HD can take a few seconds)
         preparingDetail = prepDetail()
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                    cushionSeconds: prefs.engine == "chatterbox" ? 2.0 : 0.35)
+                    cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
         do {
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
@@ -291,7 +291,7 @@ final class AppState: ObservableObject {
             preparing = true
             preparingDetail = prepDetail()
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                        cushionSeconds: prefs.engine == "chatterbox" ? 2.0 : 0.35)
+                        cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
                 : Self.sampleText(for: prefs.voice)
