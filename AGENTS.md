@@ -31,6 +31,38 @@ pieces an agent must keep in sync if touching either side:
   answers does it launch `scripts/run_backend.sh`. Don't assume the app owns the
   process it's talking to.
 
+## Two engines (Kokoro + Chatterbox Turbo HD)
+
+`/synthesize` takes an `engine` param: `kokoro` (default) or `chatterbox`. Both
+emit the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
+
+- **Kokoro** — `Engine` in `server.py`, ONNX/CPU, bundled, instant. Voices = the
+  54 model voices.
+- **Chatterbox Turbo HD** — `chatterbox_engine.py`, PyTorch/MPS, **cloning-only**:
+  each "voice" is a ~10s reference WAV in `hd-voices/`. Lazy — no torch import
+  until first HD use. Gotchas baked in: a global float64→float32 `.to(mps)` patch
+  (Metal has no float64, crashes otherwise), a warmup on load (~8s cold, then
+  RTF ~0.7), and the real Perth watermark when available.
+
+Key facts an agent must keep straight:
+- HD deps are **not** in `requirements.txt` (too heavy). They install on demand
+  into `hd-packages/` via `/engines/chatterbox/install`, which **also** installs
+  kokoro-onnx + onnxruntime there so ONE process serves both engines. numpy is
+  pinned <2; kokoro-onnx's `>=2` pin is conservative and works on 1.26 (verified).
+- `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present,
+  so numpy 1.26 is used process-wide. Restart the backend after install to load
+  the combined env.
+- HD is cloning. **Never source or ship celebrity / non-consented voices.** Audio
+  is watermarked; the UI says clone only what you have rights to. Starter voices
+  are CMU ARCTIC (free); `fetch_hd_voices.sh` / `/voices/hd/starters` fetch them.
+- Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
+  not the backend — Chatterbox has no speed knob, and this makes speed real-time
+  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 2s HD) before
+  starting, so near-real-time HD generation doesn't underrun into silence.
+- @Published writes from the audio-stream callback **must** hop to the main actor
+  (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
+  and SIGABRTs. This bit us once.
+
 ## Packaging / deployment
 
 The app ships a **self-contained Python runtime** so end users need nothing

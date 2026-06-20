@@ -1,6 +1,8 @@
 # Architecture
 
-Two processes. A native SwiftUI menu-bar app drives a local Python Kokoro sidecar over loopback HTTP.
+Two processes. A native SwiftUI menu-bar app drives a local Python sidecar over
+loopback HTTP. The sidecar hosts two interchangeable engines (Kokoro default,
+Chatterbox Turbo HD opt-in) behind one int16-PCM contract.
 
 ## Modules
 
@@ -15,12 +17,15 @@ Two processes. A native SwiftUI menu-bar app drives a local Python Kokoro sideca
 | Preprocessing / cleanup | `Preprocess.swift` |
 | Backend HTTP client | `BackendClient.swift` |
 | Backend process supervisor | `BackendManager.swift` |
-| Streaming audio engine | `AudioPlayer.swift` |
+| Streaming audio engine (pre-buffer, live speed) | `AudioPlayer.swift` |
+| Reference-clip import (→ mono 24k WAV) | `AudioImport.swift` |
+| Unified voice picker (both engines) | `Views/VoiceSelector.swift` |
 | Model download | `ModelDownloader.swift` |
 | Launch at login | `LoginItem.swift` |
 | Views | `Views/MenuContent.swift`, `Views/SettingsView.swift` |
-| Logic self-test | `Selftest.swift` (`--selftest`) |
-| Inference server | `backend/server.py` |
+| Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
+| Inference server (both engines) | `backend/server.py` |
+| HD engine (Chatterbox Turbo, lazy) | `backend/chatterbox_engine.py` |
 
 ## Read pipeline
 

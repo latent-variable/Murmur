@@ -11,6 +11,10 @@ final class AudioPlayer {
                                          sampleRate: 24000, channels: 1, interleaved: false)!
     private var leftoverByte: UInt8?
     private var scheduledFrames: AVAudioFrameCount = 0
+    // Pre-buffer: hold playback until this much audio is queued, so transient
+    // slow chunks (HD generates near real-time) don't cause silence gaps.
+    private var primeFrames: AVAudioFrameCount = 8400  // ~0.35s default
+    private var primed = false
 
     var onFinished: (() -> Void)?
 
@@ -32,16 +36,28 @@ final class AudioPlayer {
         pitchUnit.rate = max(0.25, min(4.0, rate))
     }
 
-    /// Begin a fresh playback session.
-    func start(volume: Float, pitchCents: Float, rate: Float) {
+    /// Begin a fresh playback session. `cushionSeconds` of audio is buffered
+    /// before playback starts (larger for slower engines = smoother streaming).
+    func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) {
         stop()
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
+        primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
+        primed = false
         do {
             if !engine.isRunning { try engine.start() }
-            player.play()
+            // engine running but the node waits for the cushion (see feed/flush)
         } catch {
             NSLog("audio engine start failed: \(error)")
+        }
+    }
+
+    /// Start playback now even if the cushion isn't full (call when the stream
+    /// ends, so short clips below the cushion still play).
+    func flush() {
+        if !primed && scheduledFrames > 0 {
+            primed = true
+            player.play()
         }
     }
 
@@ -73,7 +89,12 @@ final class AudioPlayer {
             guard let self else { return }
             self.scheduledFrames -= buffer.frameLength
         }
-        if !player.isPlaying { player.play() }
+        // Start once the cushion is full; after that, keep the node playing.
+        if !primed {
+            if scheduledFrames >= primeFrames { primed = true; player.play() }
+        } else if !player.isPlaying {
+            player.play()
+        }
     }
 
     func pause() { player.pause() }
@@ -85,6 +106,7 @@ final class AudioPlayer {
     func stop() {
         player.stop()
         player.reset()
+        primed = false
         leftoverByte = nil
         scheduledFrames = 0
     }

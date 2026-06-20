@@ -29,24 +29,30 @@ First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibi
 ## What it does
 
 - **Read from anywhere** — Chrome, Safari, PDFs, Terminal, VS Code, Notes, Slack, Gmail, Markdown. Selected-text capture via the Accessibility API, with a clipboard-copy fallback that restores your clipboard.
-- **54 local voices**, 8 languages (English US/UK, Spanish, French, Italian, Hindi, Japanese, Portuguese, Chinese). Apple-Silicon accelerated.
-- **Streaming playback** — audio starts while the rest is still synthesizing. Play / pause / stop, speed, pitch, volume.
-- **Smart cleanup** — strips Markdown, code fences, citations, terminal prompts, and more before speaking. Profiles for General / Markdown / Code / Blog / LLM output, plus editable regex rules with live preview.
-- **Menu-bar utility** — status indicator (idle / loading / reading / paused / error), quick controls, settings. No dock icon.
+- **Two voice engines, one dropdown:**
+  - **Kokoro** (default) — 54 voices, 8 languages, instant, CPU. The everyday driver.
+  - **Chatterbox Turbo HD** (opt-in) — markedly more natural speech on the GPU, with **voice cloning** from a ~10s reference clip. Ships a few clean open voices (CMU ARCTIC) and lets you add your own.
+- **Streaming playback** — audio starts while the rest synthesizes. Play / pause / stop; **live speed** (drag mid-readout), pitch, volume; natural pauses at sentence/line/paragraph boundaries.
+- **Smart cleanup** — strips Markdown, code fences, citations, terminal prompts, and more. Profiles for General / Markdown / Code / Blog / LLM output, plus editable regex rules with live preview.
+- **Menu-bar utility** — status indicator, quick controls, settings. No dock icon. Fully local; HD audio is watermarked.
 
 ## Architecture
 
-Native SwiftUI menu-bar app + a local Python Kokoro sidecar over `127.0.0.1`.
+Native SwiftUI menu-bar app + a local Python sidecar over `127.0.0.1`, with two interchangeable engines behind one HTTP contract.
 
 ```
-SwiftUI app ──HTTP──> FastAPI sidecar ──> kokoro-onnx (ONNX Runtime, Apple Silicon)
-  hotkey · capture · cleanup · audio        streaming int16 PCM @ 24 kHz
+SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)         ← default, instant
+  hotkey · capture · cleanup            └─ Chatterbox Turbo (PyTorch, MPS) ← opt-in HD, cloning
+  AVAudioEngine player                     streaming int16 PCM @ 24 kHz
 ```
 
-- `backend/server.py` — `/health`, `/voices`, `/synthesize` (streams PCM; `?format=wav` for export).
-- `app/Sources/Murmur/` — hotkey (Carbon), capture (AX + clipboard), preprocessing, AVAudioEngine player, settings, views.
+- `backend/server.py` — `/health`, `/engines`, `/voices?engine=`, `/synthesize` (streams PCM, `engine` param; `?format=wav` for export), HD install + starter-voice endpoints.
+- `backend/chatterbox_engine.py` — the HD engine, lazy-loaded (no torch until used).
+- `app/Sources/Murmur/` — hotkey (Carbon), capture (AX + clipboard), preprocessing, AVAudioEngine player (pre-buffered streaming, live speed via time-stretch), settings, views.
 
-Why a Python sidecar: Kokoro's reference runtime is Python, and `kokoro-onnx` gives fast local inference with no PyTorch. The app supervises it, keeps it warm, and reuses an already-running instance.
+**The default app stays small (~88 MB).** Kokoro is bundled; the HD engine (torch + Chatterbox, ~1.3 GB) downloads on demand into Application Support **only when you enable it** — never in the shipped app. Both engines then run in one process (kokoro-onnx happily coexists with torch on numpy 1.26).
+
+HD note: Chatterbox is a cloning model — each HD voice is a ~10s reference clip. Output is watermarked (Resemble Perth). **Only clone voices you have the rights to use.** See [docs/MODELS.md](docs/MODELS.md).
 
 ## Develop
 
@@ -124,14 +130,15 @@ Shipped:
 - [x] Drag-to-install DMG + GitHub release.
 - [x] Selectable compute provider (auto/CPU/CoreML) + backend test suite.
 - [x] **Self-contained: bundles its own Python runtime** — runs on Macs with no Python installed.
+- [x] **Chatterbox Turbo HD engine** — opt-in GPU voice cloning, unified voice picker, live speed, pre-buffered streaming.
 
 Next:
 
 - [ ] Notarize + Developer ID sign (drop the quarantine/right-click step — needs Apple Developer account).
+- [ ] Right-click → "Read aloud" (macOS Services menu).
 - [ ] Per-app capture overrides and audio caching.
-- [ ] Floating draggable mini-player window.
 - [ ] More export formats (MP3/AAC) and "save while reading".
 
 ## License
 
-MIT. Kokoro weights are Apache-2.0 (hexgrad/Kokoro-82M).
+MIT. Kokoro weights are Apache-2.0 (hexgrad/Kokoro-82M). Chatterbox is MIT (Resemble AI); HD reference voices from CMU ARCTIC (free to use). HD audio is watermarked; clone only voices you have rights to.

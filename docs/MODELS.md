@@ -9,10 +9,17 @@ Murmur's hard constraints, in priority order:
 4. **Multiple natural English voices** out of the box. Voice cloning is a
    non-goal.
 
-A replacement has to **beat Kokoro on quality without losing 1–3.** Most of the
-2026 quality leaders lose them (they want a GPU). So far nothing dominates
-Kokoro on our exact axis — like Parakeet beating Whisper, but for CPU-local TTS
-that clean win doesn't exist yet. **Decision: stay on Kokoro, keep watching.**
+A replacement has to **beat Kokoro on quality without losing 1–3.** Nothing does
+on the CPU axis. So instead of replacing Kokoro, we **added a second, opt-in
+engine** for when quality matters more than instant/light:
+
+- **Kokoro** stays the default — instant, CPU, bundled, 54 voices.
+- **Chatterbox Turbo HD** is the opt-in engine — GPU (MPS), ~1.3 GB on-demand
+  download, voice cloning from a ~10s reference. Measured on Apple Silicon: warm
+  per-sentence RTF ~0.7 (streams fine), cold first load ~8s. Watermarked. See
+  AGENTS.md "Two engines" for the integration details.
+
+The rest of this file remains the watchlist for future candidates.
 
 ## Current
 

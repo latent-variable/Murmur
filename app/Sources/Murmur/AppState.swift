@@ -180,7 +180,8 @@ final class AppState: ObservableObject {
         status = .reading
         preparing = true   // first audio not here yet (HD can take a few seconds)
         preparingDetail = prepDetail()
-        audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
+        audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
+                    cushionSeconds: prefs.engine == "chatterbox" ? 2.0 : 0.35)
         do {
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
@@ -196,6 +197,7 @@ final class AppState: ObservableObject {
                     if self.prefs.engine == "chatterbox" { self.hdWarm = true }
                 }
             }
+            audio.flush()   // stream ended — play any sub-cushion remainder
             // drain
             while gen == generation && audio.hasQueued && status == .reading {
                 try? await Task.sleep(nanoseconds: 150_000_000)
@@ -256,7 +258,8 @@ final class AppState: ObservableObject {
             status = .reading
             preparing = true
             preparingDetail = prepDetail()
-            audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed))
+            audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
+                        cushionSeconds: prefs.engine == "chatterbox" ? 2.0 : 0.35)
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
                 : Self.sampleText(for: prefs.voice)
@@ -266,6 +269,7 @@ final class AppState: ObservableObject {
                 self.audio.feed(d)
                 Task { @MainActor in if self.preparing { self.preparing = false } }
             }
+            audio.flush()
             while gen == generation && audio.hasQueued { try? await Task.sleep(nanoseconds: 150_000_000) }
             if gen == generation { preparing = false; status = .idle }
         }
