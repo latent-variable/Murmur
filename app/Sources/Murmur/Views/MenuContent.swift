@@ -81,6 +81,7 @@ struct MenuContent: View {
         }
         .padding(14)
         .frame(width: 300)
+        .onAppear { state.refreshHD() }   // pick up newly added HD voices
     }
 
     private var header: some View {
