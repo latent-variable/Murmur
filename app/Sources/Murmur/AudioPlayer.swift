@@ -9,21 +9,18 @@ final class AudioPlayer {
     private let pitchUnit = AVAudioUnitTimePitch()
     private let inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: 24000, channels: 1, interleaved: false)!
-    // feed() runs on the background streaming thread; transport (pause/resume/
-    // stop/start) and the schedule-completion callback run on other threads. This
-    // lock guards ALL mutable state below AND the player.play()/pause() that
-    // follows a state change, so the two are atomic — a concurrent pause can't be
-    // lost in the window between checking `paused` and calling play(). play/pause
-    // only signal the render thread (they don't block), so holding the lock across
-    // them is safe; the completion callback takes the lock only to adjust a
-    // counter, never nesting.
-    private let lock = NSLock()
+
+    // A single serial queue owns EVERY player-node call (schedule/play/pause/
+    // stop/reset) and all the mutable state below. Every entry point hops onto
+    // it, so node calls never run concurrently (no data race) and buffer
+    // completions dispatch back onto it asynchronously (no lock is held across a
+    // node call, so a completion delivered during reset() can't deadlock). The
+    // AVAudioEngine itself (start/isRunning) is engine-level, not node-level, and
+    // stays on the calling thread.
+    private let q = DispatchQueue(label: "com.murmur.audioplayer")
+
     private var leftoverByte: UInt8?
     private var scheduledFrames: AVAudioFrameCount = 0
-    // Bumped on stop()/start(). A scheduleBuffer completion from a previous
-    // session carries the old epoch and is ignored, so it can't decrement (and
-    // underflow, since the count is unsigned) the new session's frame counter.
-    private var epoch: UInt64 = 0
     // Pre-buffer: hold playback until this much audio is queued, so transient
     // slow chunks (HD generates near real-time) don't cause silence gaps.
     private var primeFrames: AVAudioFrameCount = 8400  // ~0.35s default
@@ -35,6 +32,10 @@ final class AudioPlayer {
     // (let feed re-prime, preserving the cushion) from "paused after the stream
     // ended" (play the sub-cushion remainder now, since no more audio is coming).
     private var ended = false
+    // Bumped on every start()/stop(). A scheduleBuffer completion from a previous
+    // session carries the old epoch and is ignored, so it can't decrement (and
+    // underflow, since the count is unsigned) the new session's frame counter.
+    private var epoch: UInt64 = 0
 
     var onFinished: (() -> Void)?
 
@@ -59,11 +60,18 @@ final class AudioPlayer {
     /// Begin a fresh playback session. `cushionSeconds` of audio is buffered
     /// before playback starts (larger for slower engines = smoother streaming).
     func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) {
-        stop()   // resets all state + bumps epoch under the lock
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
-        lock.withLock {
+        q.sync {
+            epoch &+= 1                  // invalidate any in-flight completions
+            primed = false
+            paused = false
+            ended = false
+            scheduledFrames = 0
+            leftoverByte = nil
             primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
+            player.stop()
+            player.reset()
         }
         do {
             if !engine.isRunning { try engine.start() }
@@ -76,87 +84,82 @@ final class AudioPlayer {
     /// Start playback now even if the cushion isn't full (call when the stream
     /// ends, so short clips below the cushion still play).
     func flush() {
-        lock.withLock {
-            ended = true
-            if !paused && !primed && scheduledFrames > 0 {
-                primed = true
-                player.play()
+        q.async {
+            self.ended = true
+            if !self.paused && !self.primed && self.scheduledFrames > 0 {
+                self.primed = true
+                self.player.play()
             }
         }
     }
 
     /// Feed raw int16 little-endian PCM bytes.
     func feed(_ data: Data) {
-        var bytes = data
-        let myEpoch: UInt64 = lock.withLock {
-            if let lo = leftoverByte {
+        q.async {
+            var bytes = data
+            if let lo = self.leftoverByte {
                 bytes.insert(lo, at: 0)
-                leftoverByte = nil
+                self.leftoverByte = nil
             }
             if bytes.count % 2 == 1 {
-                leftoverByte = bytes.last
+                self.leftoverByte = bytes.last
                 bytes.removeLast()
             }
-            return epoch
-        }
-        guard !bytes.isEmpty else { return }
-        let sampleCount = bytes.count / 2
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: inFormat,
-                                            frameCapacity: AVAudioFrameCount(sampleCount)) else { return }
-        buffer.frameLength = AVAudioFrameCount(sampleCount)
-        let dst = buffer.floatChannelData![0]
-        bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            let src = raw.bindMemory(to: Int16.self)
-            for i in 0..<sampleCount {
-                dst[i] = Float(Int16(littleEndian: src[i])) / 32768.0
+            guard !bytes.isEmpty else { return }
+            let sampleCount = bytes.count / 2
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: self.inFormat,
+                                                frameCapacity: AVAudioFrameCount(sampleCount)) else { return }
+            buffer.frameLength = AVAudioFrameCount(sampleCount)
+            let dst = buffer.floatChannelData![0]
+            bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                let src = raw.bindMemory(to: Int16.self)
+                for i in 0..<sampleCount {
+                    dst[i] = Float(Int16(littleEndian: src[i])) / 32768.0
+                }
             }
-        }
-        let frames = buffer.frameLength
-        // All node access (schedule + play) happens under the lock, so it's
-        // mutually exclusive with stop()/pause() — they can't interleave with a
-        // teardown. The epoch guard drops a buffer if stop() ran while we built
-        // it, so nothing is scheduled onto a reset node.
-        lock.withLock {
-            guard myEpoch == epoch else { return }
-            scheduledFrames += frames
-            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            let frames = buffer.frameLength
+            let myEpoch = self.epoch
+            self.scheduledFrames += frames
+            self.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 guard let self else { return }
-                self.lock.withLock {
+                self.q.async {
+                    // ignore completions from a previous session; clamp so the
+                    // unsigned counter can never underflow
                     guard myEpoch == self.epoch else { return }
                     self.scheduledFrames = self.scheduledFrames >= frames ? self.scheduledFrames - frames : 0
                 }
             }
             // Start once the cushion is full; after that keep the node playing —
             // unless paused, in which case keep buffering but stay stopped.
-            if !paused {
-                if !primed {
-                    if scheduledFrames >= primeFrames {
-                        primed = true
-                        player.play()
+            if !self.paused {
+                if !self.primed {
+                    if self.scheduledFrames >= self.primeFrames {
+                        self.primed = true
+                        self.player.play()
                     }
-                } else if !player.isPlaying {
-                    player.play()
+                } else if !self.player.isPlaying {
+                    self.player.play()
                 }
             }
         }
     }
 
     func pause() {
-        lock.withLock {
-            paused = true
-            player.pause()
+        q.async {
+            self.paused = true
+            self.player.pause()
         }
     }
 
     func resume() {
         if !engine.isRunning { try? engine.start() }
-        lock.withLock {
-            paused = false
-            if primed {
-                player.play()                       // was playing before pause
-            } else if ended && scheduledFrames > 0 {
-                primed = true                       // stream done: play remainder
-                player.play()
+        q.async {
+            self.paused = false
+            if self.primed {
+                self.player.play()                       // was playing before pause
+            } else if self.ended && self.scheduledFrames > 0 {
+                self.primed = true                       // stream done: play remainder
+                self.player.play()
             }
             // else paused mid-prime, stream still live: leave unprimed so feed()
             // refills the cushion before starting — avoids an undersized buffer.
@@ -164,24 +167,18 @@ final class AudioPlayer {
     }
 
     func stop() {
-        // Bump the epoch and reset state UNDER the lock first: that's what gates
-        // feed() (it checks `myEpoch == epoch` under the lock before it touches
-        // the node), so once this returns, no in-flight feed will schedule onto
-        // the node we're about to tear down. The node calls themselves stay
-        // outside the lock so a completion handler delivered during reset() can't
-        // deadlock by re-entering the (non-recursive) lock.
-        lock.withLock {
+        q.sync {
             epoch &+= 1
             primed = false
             paused = false
             ended = false
             scheduledFrames = 0
             leftoverByte = nil
+            player.stop()
+            player.reset()
         }
-        player.stop()
-        player.reset()
     }
 
     /// Approximate: is anything still queued?
-    var hasQueued: Bool { lock.withLock { scheduledFrames > 0 } }
+    var hasQueued: Bool { q.sync { scheduledFrames > 0 } }
 }
