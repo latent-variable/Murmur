@@ -68,13 +68,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Backs the macOS Services menu item. The system calls `readWithMurmur:…` with
 /// the selected text on a pasteboard; we hand it to AppState to speak.
 final class ServiceProvider: NSObject {
-    @objc func readWithMurmur(_ pboard: NSPasteboard, userData: String?,
-                              error: AutoreleasingUnsafeMutablePointer<NSString>) {
+    // Services dispatches on the main thread; @MainActor lets us call AppState
+    // directly. The error pointer is optional — Cocoa may pass nil when the
+    // caller doesn't want error details, so never force-dereference it.
+    @objc @MainActor func readWithMurmur(_ pboard: NSPasteboard, userData: String?,
+                                         error: AutoreleasingUnsafeMutablePointer<NSString>?) {
         guard let text = pboard.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            error.pointee = "No text to read." as NSString
+            error?.pointee = "No text to read." as NSString
             return
         }
-        Task { @MainActor in AppState.shared.readAloud(text) }
+        AppState.shared.readAloud(text)
     }
 }
