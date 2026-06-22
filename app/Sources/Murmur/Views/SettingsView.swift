@@ -196,11 +196,12 @@ private struct EngineTab: View {
                 Text("Step 1 — name this voice").font(.caption).bold().foregroundStyle(.secondary)
                 TextField("Type a name, e.g. Sam", text: $newName)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(recorder.recording)   // don't let the name change mid-record
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Step 2 — add 10–20s of audio")
                     .font(.caption).bold()
-                    .foregroundStyle(nameReady ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(nameReady ? .secondary : .tertiary)
                 HStack {
                     Button { showImporter = true } label: { Label("Import audio file…", systemImage: "square.and.arrow.down") }
                         .disabled(!nameReady || recorder.recording)
