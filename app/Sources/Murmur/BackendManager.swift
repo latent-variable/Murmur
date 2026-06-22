@@ -109,7 +109,13 @@ final class BackendManager: ObservableObject {
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [root.appending(path: "scripts/run_backend.sh").path]
             if hdPresent {
-                env["PYTHONPATH"] = hd.path + (env["PYTHONPATH"].map { ":" + $0 } ?? "")
+                // Append the existing PYTHONPATH only if it's non-empty — a bare
+                // ":" would add an empty entry (== cwd) to sys.path.
+                if let existing = env["PYTHONPATH"], !existing.isEmpty {
+                    env["PYTHONPATH"] = hd.path + ":" + existing
+                } else {
+                    env["PYTHONPATH"] = hd.path
+                }
             }
             env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin"
         } else {

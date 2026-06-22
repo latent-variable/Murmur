@@ -157,8 +157,10 @@ final class AppState: ObservableObject {
 
     private func runRead() async {
         // Ignore a re-trigger fired during the (now async) capture window — the
-        // first capture is still in flight; a second would just race it.
-        if status == .capturing { return }
+        // first capture is still in flight; a second would just race it. Checks
+        // TextCapture.isCapturing too: a trigger while already reading keeps
+        // status == .reading, so the status check alone would miss it.
+        if status == .capturing || TextCapture.isCapturing { return }
         let wasPlaying = (status == .reading || status == .paused)
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }

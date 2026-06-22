@@ -119,8 +119,9 @@ enum TextCapture {
     // Guards against async re-entrancy: viaClipboardAsync yields the main actor
     // during its wait, so a second trigger (double hotkey) could otherwise
     // interleave save/copy/restore on the single global pasteboard and corrupt
-    // the user's clipboard. A concurrent attempt just returns nil.
-    @MainActor private static var isCapturing = false
+    // the user's clipboard. A concurrent attempt just returns nil. Readable so
+    // callers (AppState) can skip re-triggering a read while one is mid-capture.
+    @MainActor private(set) static var isCapturing = false
 
     /// Async twin of `viaClipboard`: identical logic and the same
     /// never-return-the-stale-clipboard guarantee, but the wait yields the main
@@ -133,6 +134,7 @@ enum TextCapture {
         defer { isCapturing = false }
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
+        defer { restore(pb, saved) }   // always put the user's clipboard back
         let beforeCount = pb.changeCount
 
         sendCopy()
@@ -154,7 +156,7 @@ enum TextCapture {
                 : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
         }
 
-        restore(pb, saved)
+        // clipboard restored by the defer above
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
         return nil
     }
