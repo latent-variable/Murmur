@@ -70,12 +70,13 @@ class ChatterboxTurboEngine:
         self.device = "cpu"
         self.error: Optional[str] = None
         self._cached_ref: Optional[str] = None  # voice whose conditioning is loaded
-        # Serializes all model access. PyTorch/MPS is not thread-safe, and the
+        # Serializes all model/GPU access. PyTorch/MPS is not thread-safe, and the
         # FastAPI sync endpoints run in a threadpool — so a warm (voice switch)
         # and a synth (read) can land concurrently. Without this they corrupt
-        # each other on the GPU and the read's segments silently fail. Reentrant
-        # because synth()/warm() call load() while already holding it.
-        self._lock = threading.RLock()
+        # each other on the GPU and the read's segments silently fail. A plain
+        # lock suffices: load() is only ever called OUTSIDE a held lock, so no
+        # locked section re-enters it.
+        self._lock = threading.Lock()
 
     def available(self) -> bool:
         """Are the heavy deps importable (without loading the model)?"""
@@ -174,7 +175,9 @@ class ChatterboxTurboEngine:
         with self._lock:   # serialize GPU access — warm/synth must not overlap
             self._prepare(ref_path)             # cached; cheap after first call
             wav = self.model.generate(text)     # reuse cached conditioning
-        arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
+            # MPS ops are async; keep the GPU->CPU transfer inside the lock so it
+            # can't read the tensor while another thread runs generate().
+            arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
         return arr
 
     def status(self) -> dict:
