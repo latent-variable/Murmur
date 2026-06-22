@@ -83,23 +83,26 @@ struct BackendClient {
     }
 
     private func synthRequest(_ text: String, voice: String, speed: Double,
-                              pauseScale: Double, engine: String, wav: Bool) -> URLRequest {
+                              pauseScale: Double, engine: String, wav: Bool,
+                              hdStream: Bool = false) -> URLRequest {
         var url = base.appending(path: "synthesize")
         if wav { url.append(queryItems: [URLQueryItem(name: "format", value: "wav")]) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["text": text, "voice": voice, "speed": speed,
+        var body: [String: Any] = ["text": text, "voice": voice, "speed": speed,
                                    "pause_scale": pauseScale, "engine": engine]
+        if hdStream { body["hd_stream"] = true }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return req
     }
 
     /// Stream raw int16 PCM. `onChunk` receives bytes as they arrive.
     func streamPCM(text: String, voice: String, speed: Double, pauseScale: Double = 1.0,
-                   engine: String = "kokoro", onChunk: @escaping (Data) -> Void) async throws {
+                   engine: String = "kokoro", hdStream: Bool = false,
+                   onChunk: @escaping (Data) -> Void) async throws {
         let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
-                               engine: engine, wav: false)
+                               engine: engine, wav: false, hdStream: hdStream)
         let (bytes, response) = try await session.bytes(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw NSError(domain: "Murmur", code: http.statusCode,

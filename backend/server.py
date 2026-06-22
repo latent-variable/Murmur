@@ -388,6 +388,7 @@ class SynthReq(BaseModel):
     lang: Optional[str] = None
     pause_scale: float = 1.0    # multiplies the gaps between sentences/lines/paragraphs
     engine: str = "kokoro"      # "kokoro" | "chatterbox"
+    hd_stream: bool = False     # HD only: vocode token windows as they decode (faster first audio)
 
 
 # Reference voice clips for the Chatterbox (cloning) engine live here.
@@ -528,6 +529,17 @@ def _segment_synth(req: SynthReq):
     return lambda text: engine.synth(text, req.voice, req.speed, req.lang)
 
 
+def _hd_stream_synth(req: SynthReq):
+    """Return a `stream(text) -> Iterator[ndarray]` for the HD streaming path."""
+    ref = hd_voice_path(req.voice)
+    if ref is None:
+        raise HTTPException(400, f"reference voice '{req.voice}' not found")
+    if not cb_engine.load():
+        raise HTTPException(503, cb_engine.error or "HD engine not available")
+    ref_str = str(ref)
+    return lambda text: cb_engine.synth_stream(text, ref_str)
+
+
 @app.post("/engines/chatterbox/warm")
 def warm_chatterbox(voice: str = Query("")):
     """Pre-load the HD model + a voice so the first read is fast. Called when
@@ -594,12 +606,17 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
     if not req.text.strip():
         raise HTTPException(400, "empty text")
 
+    # Streaming decode only applies to the HD engine's PCM path (not WAV export).
+    streaming = (req.engine == "chatterbox" and req.hd_stream
+                 and format != "wav" and cb_engine.available())
+
     segments = segment_text(req.text)
-    if req.engine == "chatterbox":
-        segments = merge_for_hd(segments)   # fewer, larger calls = smoother HD
+    if req.engine == "chatterbox" and not streaming:
+        # Monolithic HD: merge into fewer, larger calls = smoother HD. Streaming
+        # windows tokens within each sentence instead, so skip the merge.
+        segments = merge_for_hd(segments)
     if not segments:
         raise HTTPException(400, "no speakable text")
-    do_synth = _segment_synth(req)
 
     # Couple pauses to speed: faster speech -> proportionally shorter gaps, so
     # cadence stays natural at any speed. pause_scale is the user's multiplier.
@@ -610,6 +627,7 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         return np.zeros(n, dtype=np.float32) if n > 0 else np.zeros(0, dtype=np.float32)
 
     if format == "wav":
+        do_synth = _segment_synth(req)
         parts: list[np.ndarray] = []
         for text, gap in segments:
             parts.append(do_synth(text))
@@ -620,21 +638,38 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         return Response(content=data, media_type="audio/wav",
                         headers={"Content-Disposition": "attachment; filename=murmur.wav"})
 
-    def gen() -> Iterator[bytes]:
-        for i, (text, gap) in enumerate(segments):
-            try:
-                samples = do_synth(text)
-            except Exception as e:  # noqa: BLE001
-                log.error("synth segment %d failed: %s", i, e)
-                continue
-            yield pcm16(samples)
-            if gap > 0:
-                yield pcm16(silence(gap))
+    if streaming:
+        stream_synth = _hd_stream_synth(req)
+
+        def gen() -> Iterator[bytes]:
+            for i, (text, gap) in enumerate(segments):
+                try:
+                    for window in stream_synth(text):
+                        yield pcm16(window)
+                except Exception as e:  # noqa: BLE001
+                    log.error("HD stream segment %d failed: %s", i, e)
+                    continue
+                if gap > 0:
+                    yield pcm16(silence(gap))
+    else:
+        do_synth = _segment_synth(req)
+
+        def gen() -> Iterator[bytes]:
+            for i, (text, gap) in enumerate(segments):
+                try:
+                    samples = do_synth(text)
+                except Exception as e:  # noqa: BLE001
+                    log.error("synth segment %d failed: %s", i, e)
+                    continue
+                yield pcm16(samples)
+                if gap > 0:
+                    yield pcm16(silence(gap))
 
     return StreamingResponse(gen(), media_type="application/octet-stream",
                              headers={"X-Sample-Rate": str(SAMPLE_RATE),
                                       "X-Chunks": str(len(segments)),
-                                      "X-Engine": req.engine})
+                                      "X-Engine": req.engine,
+                                      "X-HD-Stream": "1" if streaming else "0"})
 
 
 def main() -> None:

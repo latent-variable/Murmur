@@ -21,6 +21,15 @@ log = logging.getLogger("murmur")
 
 SAMPLE_RATE = 24000  # matches Kokoro / the PCM contract
 
+# Streaming-decode tunables. The AR model emits speech tokens at ~25/sec of
+# audio; we vocode them in windows as they decode instead of waiting for the
+# whole utterance. Small first window = fast first audio; later windows amortize.
+HD_STREAM_FIRST = 24   # tokens in window 0 (~1s audio)
+HD_STREAM_WIN = 48     # tokens per later window (~2s)
+HD_STREAM_XFADE_MS = 25
+_OOV = 6561            # speech tokens >= this are special/out-of-vocab — drop
+_SIL = 4299           # S3GEN_SIL — 3 pad the final window (matches generate())
+
 # Where on-demand HD deps (torch, chatterbox-tts, ...) get installed.
 def hd_packages_dir() -> Path:
     d = Path(os.environ.get("MURMUR_HD_DIR") or
@@ -179,6 +188,154 @@ class ChatterboxTurboEngine:
             # can't read the tensor while another thread runs generate().
             arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
         return arr
+
+    # ---- streaming decode (experimental) -------------------------------
+
+    def _ar_tokens(self, text, temperature=0.8, top_k=1000, top_p=0.95,
+                   repetition_penalty=1.2, max_gen_len=1000):
+        """Yield speech tokens as the AR model decodes them. Fork of
+        T3.inference_turbo that yields each token instead of returning the
+        whole sequence — lets us vocode early windows before decode finishes."""
+        import torch
+        import torch.nn.functional as F
+        from transformers.generation.logits_process import (
+            LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper,
+            TopPLogitsWarper, RepetitionPenaltyLogitsProcessor,
+        )
+        from chatterbox.tts_turbo import punc_norm
+
+        m = self.model
+        t3 = m.t3
+        hp = t3.hp
+
+        text = punc_norm(text)
+        text_tokens = m.tokenizer(text, return_tensors="pt", padding=True,
+                                  truncation=True).input_ids.to(m.device)
+
+        procs = LogitsProcessorList()
+        if temperature > 0 and temperature != 1.0:
+            procs.append(TemperatureLogitsWarper(temperature))
+        if top_k > 0:
+            procs.append(TopKLogitsWarper(top_k))
+        if top_p < 1.0:
+            procs.append(TopPLogitsWarper(top_p))
+        if repetition_penalty != 1.0:
+            procs.append(RepetitionPenaltyLogitsProcessor(repetition_penalty))
+
+        speech_start = hp.start_speech_token * torch.ones_like(text_tokens[:, :1])
+        embeds, _ = t3.prepare_input_embeds(
+            t3_cond=m.conds.t3, text_tokens=text_tokens,
+            speech_tokens=speech_start, cfg_weight=0.0,
+        )
+
+        gen = []
+        out = t3.tfmr(inputs_embeds=embeds, use_cache=True)
+        hidden = out[0]
+        past = out.past_key_values
+        logits = t3.speech_head(hidden[:, -1:])
+        proc = procs(speech_start, logits[:, -1, :])
+        nxt = torch.multinomial(F.softmax(proc, dim=-1), num_samples=1)
+        gen.append(nxt)
+        cur = nxt
+        if int(nxt) == hp.stop_speech_token:
+            return
+        yield int(nxt)
+
+        for _ in range(max_gen_len):
+            emb = t3.speech_emb(cur)
+            out = t3.tfmr(inputs_embeds=emb, past_key_values=past, use_cache=True)
+            hidden = out[0]
+            past = out.past_key_values
+            logits = t3.speech_head(hidden)
+            ids = torch.cat(gen, dim=1)
+            proc = procs(ids, logits[:, -1, :])
+            if torch.all(proc == -float("inf")):
+                break
+            nxt = torch.multinomial(F.softmax(proc, dim=-1), num_samples=1)
+            gen.append(nxt)
+            cur = nxt
+            tok = int(nxt)
+            if tok == hp.stop_speech_token:
+                break
+            yield tok
+
+    def _vocode_window(self, toks: list, apply_fade: bool) -> np.ndarray:
+        """Vocode one window of speech tokens -> float32 @ 24k. Standalone
+        (finalize=True, no lookahead drop), watermarked like generate()."""
+        import torch
+        m = self.model
+        s3 = m.s3gen
+        t = torch.tensor(toks, dtype=torch.long, device=m.device).unsqueeze(0)
+        mel = s3.flow_inference(t, ref_dict=m.conds.gen, finalize=True,
+                                n_cfm_timesteps=2).to(s3.dtype)
+        wav, _ = s3.hift_inference(mel, None)
+        arr = wav.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        if apply_fade:
+            # trim_fade masks reference spillover at the very start. Only the
+            # first window is a true start; later windows must not fade in.
+            fade = s3.trim_fade.detach().cpu().numpy().astype(np.float32)
+            n = min(len(fade), len(arr))
+            arr[:n] = arr[:n] * fade[:n]
+        # Keep the watermark guarantee generate() provides — the direct
+        # flow/hift path skips it, so apply it here per window.
+        arr = m.watermarker.apply_watermark(arr, sample_rate=SAMPLE_RATE)
+        return np.asarray(arr, dtype=np.float32)
+
+    def _iter_window_audio(self, text, first, size):
+        """Decode tokens and vocode them in windows; yield each window's audio."""
+        win: list = []
+        target = first
+        first_win = True
+        for tok in self._ar_tokens(text):
+            if tok < _OOV:
+                win.append(tok)
+            if len(win) >= target:
+                yield self._vocode_window(win, apply_fade=first_win)
+                first_win = False
+                win = []
+                target = size
+        yield self._vocode_window(win + [_SIL, _SIL, _SIL], apply_fade=first_win)
+
+    def synth_stream(self, text: str, ref_path: str,
+                     first: int = HD_STREAM_FIRST, size: int = HD_STREAM_WIN,
+                     xfade_ms: float = HD_STREAM_XFADE_MS):
+        """Streaming variant of synth(): yields float32 @ 24k audio windows as
+        the model decodes, equal-power crossfaded at the joins. The yielded
+        chunks are already contiguous (the crossfade overlap is handled here via
+        a carry buffer), so the consumer can append them gap-free."""
+        if self.model is None and not self.load():
+            raise RuntimeError(self.error or "HD engine not loaded")
+        if not ref_path or not Path(ref_path).exists():
+            raise RuntimeError("reference voice clip missing")
+        n_xf = int(xfade_ms * SAMPLE_RATE / 1000)
+        with self._lock:   # serialize GPU access for the whole stream
+            self._prepare(ref_path)
+            carry: Optional[np.ndarray] = None
+            for win_audio in self._iter_window_audio(text, first, size):
+                if carry is None:
+                    if n_xf > 0 and len(win_audio) > n_xf:
+                        yield win_audio[:-n_xf].copy()
+                        carry = win_audio[-n_xf:].copy()
+                    else:
+                        carry = win_audio
+                    continue
+                if n_xf > 0 and len(win_audio) >= n_xf and len(carry) == n_xf:
+                    fo = np.sqrt(np.linspace(1.0, 0.0, n_xf, dtype=np.float32))
+                    fi = np.sqrt(np.linspace(0.0, 1.0, n_xf, dtype=np.float32))
+                    mixed = carry * fo + win_audio[:n_xf] * fi
+                    rest = win_audio[n_xf:]
+                    if len(rest) > n_xf:
+                        yield np.concatenate([mixed, rest[:-n_xf]])
+                        carry = rest[-n_xf:].copy()
+                    else:
+                        yield mixed
+                        carry = rest.copy() if len(rest) else None
+                else:
+                    # window too short to crossfade — flush carry, append plain
+                    yield carry
+                    carry = win_audio
+            if carry is not None and len(carry):
+                yield carry
 
     def status(self) -> dict:
         return {

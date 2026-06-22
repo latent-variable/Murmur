@@ -263,7 +263,8 @@ final class AppState: ObservableObject {
             // backend synthesizes at 1.0 and pauses stretch along with it.
             try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
                                                 speed: 1.0, pauseScale: prefs.pauseScale,
-                                                engine: prefs.engine) { [weak self] data in
+                                                engine: prefs.engine,
+                                                hdStream: prefs.engine == "chatterbox" && prefs.hdStreaming) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(data)   // scheduling is thread-safe
                 // @Published writes MUST be on the main actor (the stream

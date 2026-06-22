@@ -69,6 +69,7 @@ final class Prefs: ObservableObject {
     // wait. Only acts when the HD engine is installed (so it's a no-op — "off" —
     // for the default Kokoro-only setup).
     @Published var autoLoadHD: Bool { didSet { d.set(autoLoadHD, forKey: "autoLoadHD") } }
+    @Published var hdStreaming: Bool { didSet { d.set(hdStreaming, forKey: "hdStreaming") } }  // HD: stream token windows (faster first audio)
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
@@ -89,6 +90,7 @@ final class Prefs: ObservableObject {
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
+        hdStreaming = d.object(forKey: "hdStreaming") as? Bool ?? false
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false

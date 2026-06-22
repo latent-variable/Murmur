@@ -66,6 +66,17 @@ Key facts an agent must keep straight:
   buffer banks, keeping every chunk RTF < 1. This is what makes HD latency
   consistent; if you touch the cost model, re-run `backend/tools/validate_hd_stream.py`
   (real model) and the `TestHDChunking` suite. Profile with `tools/profile_hd.py`.
+- HD **streaming decode** is an opt-in alternative to the monolithic per-chunk
+  path (Settings ▸ Engine ▸ "Streaming decode", pref `hdStreaming`, sent as
+  `hd_stream` on `/synthesize`). When on, the HD engine forks the AR loop into a
+  token generator (`ChatterboxTurboEngine.synth_stream`) and vocodes windows of
+  tokens *as they decode* — first audio ~1s vs ~2.2s monolithic, gap widens on
+  long text. Windows are vocoded standalone (finalize=True, so no dropped
+  phonemes) and equal-power crossfaded at the joins via a carry buffer; the
+  watermark is re-applied per window (the direct flow/hift path skips it).
+  Tradeoff: join continuity isn't as smooth as monolithic — hence opt-in.
+  Prototype + A/B stats: `backend/tools/streaming_decode_prototype.py`. WAV
+  export always uses the monolithic path.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.

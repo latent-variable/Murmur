@@ -121,6 +121,9 @@ private struct EngineTab: View {
                     Toggle("Pre-load HD model at launch", isOn: $prefs.autoLoadHD)
                     Text("Loads the HD voice in the background when the app starts, so your first HD read plays right away instead of a ~10-second cold start.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Streaming decode (experimental)", isOn: $prefs.hdStreaming)
+                    Text("Plays HD audio as it generates instead of waiting for each sentence to finish — first audio in ~1s. Joins between chunks may sound slightly less smooth.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
