@@ -228,6 +228,11 @@ final class AppState: ObservableObject {
         lastCaptured = raw
         lastCleaned = cleaned
         lastMethod = .none
+        // Reflect "starting" now — stream() runs on the next loop cycle, and we
+        // just stopped audio, so without this the UI would briefly show the old
+        // (e.g. .reading) state with nothing playing.
+        status = .loadingModel
+        preparing = true
         Task { await stream(cleaned, gen: gen) }
     }
 
