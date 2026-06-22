@@ -214,9 +214,30 @@ final class AppState: ObservableObject {
             return
         }
 
+        await stream(cleaned, gen: gen)
+    }
+
+    /// Read a specific string directly (e.g. from the macOS Services menu),
+    /// bypassing capture. Supersedes any current read.
+    func readAloud(_ raw: String) {
+        let cleaned = cleanedText(raw)
+        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        generation += 1
+        let gen = generation
+        audio.stop()
+        lastCaptured = raw
+        lastCleaned = cleaned
+        lastMethod = .none
+        Task { await stream(cleaned, gen: gen) }
+    }
+
+    /// Shared synth + playback path: ensure the backend is up, then stream the
+    /// cleaned text for this generation. Used by both the hotkey and Services.
+    private func stream(_ cleaned: String, gen: Int) async {
         if !backend.ready {
             status = .loadingModel
             await backend.start()
+            guard gen == generation else { return }
             if !backend.ready {
                 status = .error(backend.lastError ?? "Backend not ready")
                 return

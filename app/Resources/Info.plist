@@ -30,5 +30,26 @@
 	<string>Local-first TTS. No cloud, no tracking.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Murmur records a short clip only when you choose to create a custom HD voice from your microphone. Nothing is sent anywhere.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Read with Murmur</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>readWithMurmur</string>
+			<key>NSPortName</key>
+			<string>Murmur</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.utf8-plain-text</string>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
