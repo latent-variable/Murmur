@@ -407,15 +407,20 @@ final class AppState: ObservableObject {
     /// backend so its in-memory state matches disk.
     func deleteKokoroModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
-        stop()
+        stop()                  // stop playback
         modelsPresent = false   // reflect immediately; guards re-entry while deleting
         let dir = backend.modelsDir
         Task {
+            // Terminate the backend PROCESS first so it isn't holding the model
+            // files open while we delete them, then relaunch against the now-empty
+            // dir. (stop() above only stops playback.)
+            backend.stop()
+            try? await Task.sleep(nanoseconds: 500_000_000)  // let it exit
             await Task.detached(priority: .background) {
                 do { try FileManager.default.removeItem(at: dir) }
                 catch { Log.write("delete Kokoro model failed: \(error)") }
             }.value
-            await backend.restart()
+            await backend.start()
             modelsPresent = backend.kokoroFilesPresent
         }
     }
@@ -425,16 +430,20 @@ final class AppState: ObservableObject {
     /// the Engine tab. Callers should confirm first.
     func deleteHDModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
-        stop()
+        stop()                  // stop playback
         hdInstalled = false     // reflect immediately; guards re-entry while deleting
         if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
         Task {
+            // Terminate the backend PROCESS first so it isn't importing torch from
+            // hd-packages while we delete it, then relaunch in the Kokoro-only env.
+            backend.stop()
+            try? await Task.sleep(nanoseconds: 500_000_000)  // let it exit
             await Task.detached(priority: .background) {
                 do { try FileManager.default.removeItem(at: dir) }
                 catch { Log.write("delete HD model failed: \(error)") }
             }.value
-            await backend.restart()
+            await backend.start()
             refreshHD()
         }
     }
