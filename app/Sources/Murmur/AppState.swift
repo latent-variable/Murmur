@@ -362,10 +362,10 @@ final class AppState: ObservableObject {
 
     /// On-demand HD engine + weights (torch, chatterbox-tts, model files) — not
     /// bundled; installed here via the Engine tab. Used by the Models tab to
-    /// report HD status alongside Kokoro.
+    /// report HD status alongside Kokoro. Sibling of hd-voices, so derive it from
+    /// hdVoicesDir to reuse that base (no duplicate Application Support lookup).
     var hdPackagesDir: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Murmur/hd-packages")
+        hdVoicesDir.deletingLastPathComponent().appending(path: "hd-packages")
     }
 
     func refreshHD() {
