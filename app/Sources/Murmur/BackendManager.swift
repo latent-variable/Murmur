@@ -200,10 +200,10 @@ final class BackendManager: ObservableObject {
         p.terminate()
         // Wait up to ~5s for exit; never hang the UI if the process ignores
         // SIGTERM (the unlink that follows works on still-open files anyway).
-        await Task.detached(priority: .background) {
-            let deadline = Date().addingTimeInterval(5)
-            while p.isRunning && Date() < deadline { usleep(50_000) }
-        }.value
+        let deadline = Date().addingTimeInterval(5)
+        while p.isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
         process = nil
         ownsProcess = false
     }

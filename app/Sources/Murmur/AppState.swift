@@ -429,7 +429,20 @@ final class AppState: ObservableObject {
             }.value
             await backend.start()
             modelsPresent = backend.kokoroFilesPresent
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
             deletingKokoro = false
+        }
+    }
+
+    /// After (re)downloading the Kokoro model, the already-running sidecar won't
+    /// pick up the new files on its own — restart it so it loads them, then sync
+    /// UI state. (Codex P1: start() would just reuse the running, model-less
+    /// process.)
+    func reloadAfterKokoroDownload() {
+        Task {
+            await backend.restart()
+            modelsPresent = backend.kokoroFilesPresent
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
         }
     }
 
@@ -455,6 +468,7 @@ final class AppState: ObservableObject {
             }.value
             await backend.start()
             refreshHD()
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
             deletingHD = false
         }
     }

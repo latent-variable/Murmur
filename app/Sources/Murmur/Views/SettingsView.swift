@@ -513,7 +513,7 @@ private struct ModelsTab: View {
         .onChange(of: state.hdInstalled) { _, _ in refreshSizes() }
         .onChange(of: hdInstalling) { _, _ in refreshSizes() }
         .onChange(of: dl.done) { _, done in
-            if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready; refreshSizes() } }
+            if done { state.reloadAfterKokoroDownload(); refreshSizes() }
         }
         .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { kokoroSize = nil; state.deleteKokoroModel() }
