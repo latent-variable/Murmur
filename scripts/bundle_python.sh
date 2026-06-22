@@ -31,7 +31,12 @@ rm -rf "$OUT"; mkdir -p "$(dirname "$OUT")"
 mv "$TMP/x/python" "$OUT"
 
 echo "[py] installing backend deps"
-"$OUT/bin/python3" -m pip install -q --disable-pip-version-check -r "$ROOT/backend/requirements.txt"
+# PYTHONNOUSERSITE + --no-user: install everything INTO the bundle. Without this,
+# pip treats deps already present in the builder's ~/.local as "satisfied" and
+# skips them, producing a runtime that silently depends on the user's machine
+# (this bit us: csvw's uritemplate/colorama/jsonschema went missing).
+PYTHONNOUSERSITE=1 "$OUT/bin/python3" -m pip install -q --disable-pip-version-check \
+    --no-user -r "$ROOT/backend/requirements.txt"
 
 # Trim build fat (tests, caches) to shrink the bundle.
 find "$OUT/lib" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
