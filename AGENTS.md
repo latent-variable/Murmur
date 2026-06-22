@@ -141,31 +141,10 @@ Accessibility permission and a real focused app; audio needs an output device.
 
 ## Contributing / PRs
 
-- Branch off `main`; never commit straight to `main`. Open a PR with `gh`.
-- Commit + PR style follows the user's global prefs: terse, action-first, say it
-  once. End commits with `Assisted-by: Claude <model-id>` (e.g.
-  `claude-opus-4-8`); omit for trivial commits (typos, version bumps).
-- Keep the README ~100 lines; long design prose goes in `docs/`, not the README.
-  Don't hand-maintain lists the CLI/`/voices` can print live.
-- If you change the backend payload shape, update `BackendClient` and
-  `AudioPlayer` together and re-run the validation list above.
+Workflow, commit style, and the review/merge cycle follow the user-scope **`review-cycle`** skill (`~/.agents/skills/review-cycle/`) — branch off `main`, validate + test, PR, automated review (`/gemini review` first), severity-gated loop, merge per the gating tiers. Project-specific only:
 
-### Review cycle (required before merge)
-
-Every PR goes through automated review (Gemini Code Assist + the repo reviewer).
-The loop is severity-gated:
-
-- **High-priority findings are blocking.** While any review round returns even a
-  single high-priority item, you must address **every** item raised that round
-  (high *and* medium), push, and request another review. Repeat until a full
-  round comes back with **zero high-priority items**. Don't merge, and don't
-  stop the loop, while a high is outstanding.
-- **Medium / low are judgment calls.** Once no highs remain, you may use
-  judgment on the mediums (fix, or note why not) and merge.
-- Re-request a review with a `/gemini review` PR comment after each push, and
-  confirm the new review's `commit_id` matches `HEAD` before reading its verdict
-  — Gemini sometimes reports against an earlier commit.
-- Reply on the PR each round listing what was addressed.
+- If you change the backend payload shape, update `BackendClient` and `AudioPlayer` together and re-run the validation list above.
+- Keep the README ~100 lines; long design prose goes in `docs/`. Don't hand-maintain lists `/voices` can print live.
 
 ## Releases
 
