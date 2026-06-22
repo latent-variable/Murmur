@@ -13,7 +13,12 @@ struct Capture {
 /// that restores the user's original clipboard.
 enum TextCapture {
 
-    static func capture(mode: CaptureMode) -> Capture {
+    /// Async capture on the main actor. NSPasteboard is not thread-safe, so all
+    /// pasteboard access stays on the main thread; the clipboard fallback's
+    /// up-to-0.8s wait yields the actor between polls (Task.sleep) instead of
+    /// blocking it, so a slow or failed ⌘C never freezes the UI.
+    @MainActor
+    static func capture(mode: CaptureMode) async -> Capture {
         let trusted = Permissions.axTrusted
         Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted)")
         let result: Capture
@@ -22,13 +27,13 @@ enum TextCapture {
             result = viaAccessibility().map { Capture(text: $0, method: .accessibility) }
                 ?? Capture(text: "", method: .none)
         case .clipboard:
-            result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+            result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
                 ?? Capture(text: "", method: .none)
         case .auto:
             if let t = viaAccessibility(), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result = Capture(text: t, method: .accessibility)
             } else {
-                result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+                result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
                     ?? Capture(text: "", method: .none)
             }
         }
@@ -107,6 +112,52 @@ enum TextCapture {
         }
 
         restore(pb, saved)
+        if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
+        return nil
+    }
+
+    // Guards against async re-entrancy: viaClipboardAsync yields the main actor
+    // during its wait, so a second trigger (double hotkey) could otherwise
+    // interleave save/copy/restore on the single global pasteboard and corrupt
+    // the user's clipboard. A concurrent attempt just returns nil. Readable so
+    // callers (AppState) can skip re-triggering a read while one is mid-capture.
+    @MainActor private(set) static var isCapturing = false
+
+    /// Async twin of `viaClipboard`: identical logic and the same
+    /// never-return-the-stale-clipboard guarantee, but the wait yields the main
+    /// actor between polls (Task.sleep) instead of busy-waiting with usleep, so
+    /// it never freezes the UI. NSPasteboard stays on the main thread.
+    @MainActor
+    static func viaClipboardAsync() async -> String? {
+        guard !isCapturing else { return nil }
+        isCapturing = true
+        defer { isCapturing = false }
+        let pb = NSPasteboard.general
+        let saved = snapshot(pb)
+        defer { restore(pb, saved) }   // always put the user's clipboard back
+        let beforeCount = pb.changeCount
+
+        sendCopy()
+
+        var changed = false
+        // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.8
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if pb.changeCount != beforeCount { changed = true; break }
+            // On cancellation, bail immediately (the defers still restore the
+            // clipboard and reset the flag) — don't fall through to the
+            // "no change" log, and don't spin hot as a swallowed error would.
+            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
+        }
+
+        let text = changed ? pb.string(forType: .string) : nil
+        if !changed {
+            Log.write(Permissions.axTrusted
+                ? "clipboard: ⌘C produced no change (no selection?)"
+                : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
+        }
+
+        // clipboard restored by the defer above
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
         return nil
     }

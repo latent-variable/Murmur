@@ -80,11 +80,10 @@ final class BackendManager: ObservableObject {
         env["MURMUR_PORT"] = String(port)
         env["MURMUR_PROVIDER"] = Prefs.shared.providerMode
         // If the HD engine is installed, run in the combined env (numpy 1.26 +
-        // torch + kokoro) so one process serves both engines.
+        // torch + kokoro) so one process serves both engines. hd-packages must
+        // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.
         let hd = modelsDir.deletingLastPathComponent().appending(path: "hd-packages")
-        if FileManager.default.fileExists(atPath: hd.appending(path: "torch").path) {
-            env["PYTHONPATH"] = hd.path + (env["PYTHONPATH"].map { ":" + $0 } ?? "")
-        }
+        let hdPresent = FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
 
         if let py = bundledPython, let root = repoRoot() {
             // Preferred: run the bundled runtime directly — no system Python.
@@ -92,15 +91,32 @@ final class BackendManager: ObservableObject {
             p.executableURL = py
             p.arguments = [server.path, "--port", String(port),
                            "--models-dir", modelsDir.path, "--provider", Prefs.shared.providerMode]
-            // Let the relocatable runtime self-locate; drop any inherited vars
-            // that would pull in the user's Python.
+            // Drop inherited vars that would pull in the user's Python so the
+            // relocatable runtime self-locates — THEN set PYTHONPATH to just
+            // hd-packages (when present). Order matters: a prior bug cleared this
+            // key AFTER setting it, so the HD engine loaded the bundled numpy 2.x
+            // and torch/chatterbox failed on the version mismatch.
             env.removeValue(forKey: "PYTHONHOME")
-            env.removeValue(forKey: "PYTHONPATH")
             env.removeValue(forKey: "PYTHONSTARTUP")
+            env["PYTHONNOUSERSITE"] = "1"   // ignore ~/.local site-packages
+            if hdPresent {
+                env["PYTHONPATH"] = hd.path
+            } else {
+                env.removeValue(forKey: "PYTHONPATH")
+            }
         } else if let root = repoRoot() {
             // Dev fallback: build a venv via the shell launcher.
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [root.appending(path: "scripts/run_backend.sh").path]
+            if hdPresent {
+                // Append the existing PYTHONPATH only if it's non-empty — a bare
+                // ":" would add an empty entry (== cwd) to sys.path.
+                if let existing = env["PYTHONPATH"], !existing.isEmpty {
+                    env["PYTHONPATH"] = hd.path + ":" + existing
+                } else {
+                    env["PYTHONPATH"] = hd.path
+                }
+            }
             env["PATH"] = (env["PATH"] ?? "") + ":/opt/homebrew/bin:\(NSHomeDirectory())/.local/bin"
         } else {
             lastError = "Backend not found (no bundled runtime or dev scripts)."
