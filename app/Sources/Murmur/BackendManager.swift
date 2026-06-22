@@ -202,7 +202,9 @@ final class BackendManager: ObservableObject {
         // SIGTERM (the unlink that follows works on still-open files anyway).
         let deadline = Date().addingTimeInterval(5)
         while p.isRunning && Date() < deadline {
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            // do/catch (not try?) so cancellation breaks instead of busy-spinning:
+            // try? would swallow CancellationError and burn CPU until the deadline.
+            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
         }
         process = nil
         ownsProcess = false

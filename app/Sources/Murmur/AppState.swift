@@ -39,6 +39,7 @@ final class AppState: ObservableObject {
     @Published var modelsPresent = false
     @Published var deletingKokoro = false   // delete in flight — block re-trigger/download
     @Published var deletingHD = false
+    @Published var installingHD = false     // HD install in flight — block concurrent installs
     @Published var axTrusted = Permissions.axTrusted
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
@@ -477,6 +478,9 @@ final class AppState: ObservableObject {
     /// callers can flip their own UI flags on completion instead of scraping the
     /// log text.
     func installHD(onLine: @escaping (String) -> Void) async {
+        guard !installingHD else { return }   // one install at a time
+        installingHD = true
+        defer { installingHD = false }
         do {
             try await backend.client.installChatterbox { line in
                 Task { @MainActor in onLine(line) }
