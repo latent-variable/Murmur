@@ -144,9 +144,10 @@ enum TextCapture {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.8
         while ProcessInfo.processInfo.systemUptime < deadline {
             if pb.changeCount != beforeCount { changed = true; break }
-            // Break (don't swallow) on cancellation — otherwise a cancelled
-            // Task.sleep returns instantly and the loop spins hot to the deadline.
-            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { break } // 15 ms
+            // On cancellation, bail immediately (the defers still restore the
+            // clipboard and reset the flag) — don't fall through to the
+            // "no change" log, and don't spin hot as a swallowed error would.
+            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
         }
 
         let text = changed ? pb.string(forType: .string) : nil
