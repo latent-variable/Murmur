@@ -386,10 +386,10 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
-    /// Total on-disk size of a directory, in bytes (0 if missing). nonisolated +
-    /// pure FileManager so callers can run it off the main actor (it walks the
-    /// whole tree — never call it from a SwiftUI body).
-    nonisolated func dirSizeBytes(_ url: URL) -> Int64 {
+    /// Total on-disk size of a directory, in bytes (0 if missing). static + pure
+    /// FileManager so callers run it off the main actor without capturing any
+    /// @MainActor state (it walks the whole tree — never call it from a body).
+    static func dirSizeBytes(_ url: URL) -> Int64 {
         guard let en = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) else { return 0 }
         var total: Int64 = 0
@@ -407,7 +407,10 @@ final class AppState: ObservableObject {
         stop()
         let dir = backend.modelsDir
         Task {
-            await Task.detached { try? FileManager.default.removeItem(at: dir) }.value
+            await Task.detached(priority: .background) {
+                do { try FileManager.default.removeItem(at: dir) }
+                catch { Log.write("delete Kokoro model failed: \(error)") }
+            }.value
             await backend.restart()
             modelsPresent = backend.ready
         }
@@ -421,26 +424,30 @@ final class AppState: ObservableObject {
         if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
         Task {
-            await Task.detached { try? FileManager.default.removeItem(at: dir) }.value
+            await Task.detached(priority: .background) {
+                do { try FileManager.default.removeItem(at: dir) }
+                catch { Log.write("delete HD model failed: \(error)") }
+            }.value
             await backend.restart()
             refreshHD()
         }
     }
 
-    func installHD(onLine: @escaping (String) -> Void) {
-        Task {
-            do {
-                try await backend.client.installChatterbox { line in
-                    Task { @MainActor in onLine(line) }
-                }
-            } catch {
-                onLine("install error: \(error.localizedDescription)")
+    /// Install the HD engine, streaming progress via `onLine`. Awaitable so
+    /// callers can flip their own UI flags on completion instead of scraping the
+    /// log text.
+    func installHD(onLine: @escaping (String) -> Void) async {
+        do {
+            try await backend.client.installChatterbox { line in
+                Task { @MainActor in onLine(line) }
             }
-            onLine("restarting engine…")
-            await backend.restart()
-            refreshHD()
-            onLine("HD ready: \(hdInstalled)")
+        } catch {
+            onLine("install error: \(error.localizedDescription)")
         }
+        onLine("restarting engine…")
+        await backend.restart()
+        refreshHD()
+        onLine("HD ready: \(hdInstalled)")
     }
 
     /// Import an audio file as a Chatterbox reference voice (converted to a

@@ -5,6 +5,10 @@ import AppKit
 @MainActor
 final class BackendManager: ObservableObject {
     @Published var ready = false
+    /// True only when THIS app spawned the backend process (vs reusing an
+    /// already-running one). Model deletion is unsafe against a backend we don't
+    /// own — restart() can't replace it, so it would keep serving deleted files.
+    @Published private(set) var ownsProcess = false
     @Published var lastError: String?
 
     private var process: Process?
@@ -130,7 +134,7 @@ final class BackendManager: ObservableObject {
             p.standardOutput = fh
             p.standardError = fh
         }
-        do { try p.run(); process = p }
+        do { try p.run(); process = p; ownsProcess = true }
         catch { lastError = "Failed to launch backend: \(error.localizedDescription)" }
     }
 
@@ -149,6 +153,7 @@ final class BackendManager: ObservableObject {
     func stop() {
         process?.terminate()
         process = nil
+        ownsProcess = false
     }
 
     /// Restart the backend (e.g. after installing HD deps, to load the new env).

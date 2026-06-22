@@ -157,7 +157,10 @@ private struct EngineTab: View {
             } else {
                 Button("Download & enable HD") {
                     installing = true; installLog = ""
-                    state.installHD { line in installLog += line + "\n"; if line.contains("HD ready") { installing = false } }
+                    Task {
+                        await state.installHD { line in installLog += line + "\n" }
+                        installing = false
+                    }
                 }.buttonStyle(.borderedProminent)
             }
         }
@@ -431,8 +434,9 @@ private struct ModelsTab: View {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
         Task.detached {
-            let kb = kPresent ? state.dirSizeBytes(kdir) : 0
-            let hb = hdPresent ? state.dirSizeBytes(hdir) : 0
+            // static dirSizeBytes — no @MainActor state captured into this task.
+            let kb = kPresent ? AppState.dirSizeBytes(kdir) : 0
+            let hb = hdPresent ? AppState.dirSizeBytes(hdir) : 0
             let kStr = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
             let hStr = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
             await MainActor.run { kokoroSize = kStr; hdSize = hStr }
@@ -453,8 +457,11 @@ private struct ModelsTab: View {
                     ProgressView(value: dl.progress) { Text(dl.statusText).font(.caption) }
                 } else if !state.modelsPresent {
                     Button("Download model (~340 MB)") { dl.start() }
-                } else {
+                } else if state.backend.ownsProcess {
                     Button("Delete model", role: .destructive) { confirmDeleteKokoro = true }
+                } else {
+                    Text("Connected to a backend Murmur didn't start — restart Murmur to manage models.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if let e = dl.error { Text(e).font(.caption).foregroundStyle(.red) }
                 if dl.done { Text("Downloaded. Restart playback to load.").font(.caption).foregroundStyle(.green) }
@@ -481,13 +488,16 @@ private struct ModelsTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Download & install HD") {
                         hdInstalling = true; hdInstallLog = ""
-                        state.installHD { line in
-                            hdInstallLog += line + "\n"
-                            if line.contains("HD ready") { hdInstalling = false }
+                        Task {
+                            await state.installHD { line in hdInstallLog += line + "\n" }
+                            hdInstalling = false
                         }
                     }.buttonStyle(.borderedProminent)
-                } else {
+                } else if state.backend.ownsProcess {
                     Button("Delete model", role: .destructive) { confirmDeleteHD = true }
+                } else {
+                    Text("Connected to a backend Murmur didn't start — restart Murmur to manage models.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -500,13 +510,13 @@ private struct ModelsTab: View {
             if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready; refreshSizes() } }
         }
         .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { state.deleteKokoroModel() }
+            Button("Delete", role: .destructive) { kokoroSize = nil; state.deleteKokoroModel() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Frees ~340 MB. Murmur can't speak with Kokoro until you download it again.")
         }
         .confirmationDialog("Delete the HD model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { state.deleteHDModel() }
+            Button("Delete", role: .destructive) { hdSize = nil; state.deleteHDModel() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
