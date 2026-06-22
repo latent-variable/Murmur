@@ -386,6 +386,43 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
+    /// Total on-disk size of a directory, in bytes (0 if missing).
+    func dirSizeBytes(_ url: URL) -> Int64 {
+        guard let en = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in en {
+            let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+            total += Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
+        }
+        return total
+    }
+
+    /// Delete the Kokoro model files to reclaim disk. The app can't speak with
+    /// Kokoro until it's re-downloaded; callers should confirm first. Bounces the
+    /// backend so its in-memory state matches disk.
+    func deleteKokoroModel() {
+        stop()
+        try? FileManager.default.removeItem(at: backend.modelsDir)
+        Task {
+            await backend.restart()
+            modelsPresent = backend.ready
+        }
+    }
+
+    /// Delete the on-demand HD engine + weights (~1.3 GB) to reclaim disk. Falls
+    /// back to Kokoro if HD was the active engine. Re-installable from this tab or
+    /// the Engine tab. Callers should confirm first.
+    func deleteHDModel() {
+        stop()
+        if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
+        try? FileManager.default.removeItem(at: hdPackagesDir)
+        Task {
+            await backend.restart()
+            refreshHD()
+        }
+    }
+
     func installHD(onLine: @escaping (String) -> Void) {
         Task {
             do {

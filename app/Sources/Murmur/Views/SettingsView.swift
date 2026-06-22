@@ -413,17 +413,36 @@ private struct HotKeyRecorder: View {
 private struct ModelsTab: View {
     @EnvironmentObject var state: AppState
     @StateObject private var dl = ModelDownloader(modelsDir: AppState.shared.backend.modelsDir)
+    @State private var confirmDeleteKokoro = false
+    @State private var confirmDeleteHD = false
+    @State private var hdInstalling = false
+    @State private var hdInstallLog = ""
+
+    private static let sizeFmt: ByteCountFormatter = {
+        let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
+        return f
+    }()
+    private func sizeText(_ url: URL) -> String? {
+        let b = state.dirSizeBytes(url)
+        return b > 0 ? Self.sizeFmt.string(fromByteCount: b) : nil
+    }
+
     var body: some View {
         Form {
             Section("Kokoro model") {
                 LabeledContent("Status",
                     value: state.modelsPresent ? "Installed" : "Not installed")
-                LabeledContent("Location", value: AppState.shared.backend.modelsDir.path)
+                if state.modelsPresent, let s = sizeText(state.backend.modelsDir) {
+                    LabeledContent("Size on disk", value: s)
+                }
+                LabeledContent("Location", value: state.backend.modelsDir.path)
                     .font(.caption)
                 if dl.downloading {
                     ProgressView(value: dl.progress) { Text(dl.statusText).font(.caption) }
                 } else if !state.modelsPresent {
                     Button("Download model (~340 MB)") { dl.start() }
+                } else {
+                    Button("Delete model", role: .destructive) { confirmDeleteKokoro = true }
                 }
                 if let e = dl.error { Text(e).font(.caption).foregroundStyle(.red) }
                 if dl.done { Text("Downloaded. Restart playback to load.").font(.caption).foregroundStyle(.green) }
@@ -436,11 +455,27 @@ private struct ModelsTab: View {
             Section("HD model (Chatterbox)") {
                 LabeledContent("Status",
                     value: state.hdInstalled ? "Installed" : "Not installed")
+                if state.hdInstalled, let s = sizeText(state.hdPackagesDir) {
+                    LabeledContent("Size on disk", value: s)
+                }
                 LabeledContent("Location", value: state.hdPackagesDir.path)
                     .font(.caption)
-                if !state.hdInstalled {
-                    Text("Optional ~1.3 GB engine for natural, cloned voices. Download it from the Engine tab.")
+                if hdInstalling {
+                    HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
+                    ScrollView { Text(hdInstallLog).font(.caption.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 90).border(.quaternary)
+                } else if !state.hdInstalled {
+                    Text("Optional ~1.3 GB engine for natural, cloned voices.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Button("Download & install HD") {
+                        hdInstalling = true; hdInstallLog = ""
+                        state.installHD { line in
+                            hdInstallLog += line + "\n"
+                            if line.contains("HD ready") { hdInstalling = false }
+                        }
+                    }.buttonStyle(.borderedProminent)
+                } else {
+                    Button("Delete model", role: .destructive) { confirmDeleteHD = true }
                 }
             }
         }
@@ -448,6 +483,18 @@ private struct ModelsTab: View {
         .onAppear { state.refreshHD() }
         .onChange(of: dl.done) { _, done in
             if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready } }
+        }
+        .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { state.deleteKokoroModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Frees ~340 MB. Murmur can't speak with Kokoro until you download it again.")
+        }
+        .confirmationDialog("Delete the HD model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { state.deleteHDModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
         }
     }
 }
