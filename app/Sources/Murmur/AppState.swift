@@ -386,8 +386,10 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
-    /// Total on-disk size of a directory, in bytes (0 if missing).
-    func dirSizeBytes(_ url: URL) -> Int64 {
+    /// Total on-disk size of a directory, in bytes (0 if missing). nonisolated +
+    /// pure FileManager so callers can run it off the main actor (it walks the
+    /// whole tree — never call it from a SwiftUI body).
+    nonisolated func dirSizeBytes(_ url: URL) -> Int64 {
         guard let en = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) else { return 0 }
         var total: Int64 = 0
@@ -403,8 +405,9 @@ final class AppState: ObservableObject {
     /// backend so its in-memory state matches disk.
     func deleteKokoroModel() {
         stop()
-        try? FileManager.default.removeItem(at: backend.modelsDir)
+        let dir = backend.modelsDir
         Task {
+            await Task.detached { try? FileManager.default.removeItem(at: dir) }.value
             await backend.restart()
             modelsPresent = backend.ready
         }
@@ -416,8 +419,9 @@ final class AppState: ObservableObject {
     func deleteHDModel() {
         stop()
         if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
-        try? FileManager.default.removeItem(at: hdPackagesDir)
+        let dir = hdPackagesDir
         Task {
+            await Task.detached { try? FileManager.default.removeItem(at: dir) }.value
             await backend.restart()
             refreshHD()
         }

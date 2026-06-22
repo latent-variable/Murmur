@@ -417,14 +417,26 @@ private struct ModelsTab: View {
     @State private var confirmDeleteHD = false
     @State private var hdInstalling = false
     @State private var hdInstallLog = ""
+    @State private var kokoroSize: String?
+    @State private var hdSize: String?
 
     private static let sizeFmt: ByteCountFormatter = {
         let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
         return f
     }()
-    private func sizeText(_ url: URL) -> String? {
-        let b = state.dirSizeBytes(url)
-        return b > 0 ? Self.sizeFmt.string(fromByteCount: b) : nil
+
+    /// Walk model dirs off the main actor (can be large) and cache the formatted
+    /// sizes — never size a directory inside the SwiftUI body.
+    private func refreshSizes() {
+        let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
+        let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
+        Task.detached {
+            let kb = kPresent ? state.dirSizeBytes(kdir) : 0
+            let hb = hdPresent ? state.dirSizeBytes(hdir) : 0
+            let kStr = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
+            let hStr = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
+            await MainActor.run { kokoroSize = kStr; hdSize = hStr }
+        }
     }
 
     var body: some View {
@@ -432,7 +444,7 @@ private struct ModelsTab: View {
             Section("Kokoro model") {
                 LabeledContent("Status",
                     value: state.modelsPresent ? "Installed" : "Not installed")
-                if state.modelsPresent, let s = sizeText(state.backend.modelsDir) {
+                if state.modelsPresent, let s = kokoroSize {
                     LabeledContent("Size on disk", value: s)
                 }
                 LabeledContent("Location", value: state.backend.modelsDir.path)
@@ -455,7 +467,7 @@ private struct ModelsTab: View {
             Section("HD model (Chatterbox)") {
                 LabeledContent("Status",
                     value: state.hdInstalled ? "Installed" : "Not installed")
-                if state.hdInstalled, let s = sizeText(state.hdPackagesDir) {
+                if state.hdInstalled, let s = hdSize {
                     LabeledContent("Size on disk", value: s)
                 }
                 LabeledContent("Location", value: state.hdPackagesDir.path)
@@ -480,9 +492,12 @@ private struct ModelsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { state.refreshHD() }
+        .onAppear { state.refreshHD(); refreshSizes() }
+        .onChange(of: state.modelsPresent) { _, _ in refreshSizes() }
+        .onChange(of: state.hdInstalled) { _, _ in refreshSizes() }
+        .onChange(of: hdInstalling) { _, _ in refreshSizes() }
         .onChange(of: dl.done) { _, done in
-            if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready } }
+            if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready; refreshSizes() } }
         }
         .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { state.deleteKokoroModel() }
