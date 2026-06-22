@@ -239,6 +239,9 @@ final class AppState: ObservableObject {
     /// Shared synth + playback path: ensure the backend is up, then stream the
     /// cleaned text for this generation. Used by both the hotkey and Services.
     private func stream(_ cleaned: String, gen: Int) async {
+        // readAloud() hops through a Task before calling us, so a newer trigger
+        // may have bumped generation already — bail before touching shared state.
+        guard gen == generation else { return }
         if !backend.ready {
             status = .loadingModel
             await backend.start()
