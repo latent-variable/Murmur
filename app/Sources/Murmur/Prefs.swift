@@ -65,6 +65,10 @@ final class Prefs: ObservableObject {
     @Published var readSource: ReadSource { didSet { d.set(readSource.rawValue, forKey: "readSource") } }
     @Published var stopOnNewTrigger: Bool { didSet { d.set(stopOnNewTrigger, forKey: "stopOnNewTrigger") } }
     @Published var keepWarm: Bool { didSet { d.set(keepWarm, forKey: "keepWarm") } }
+    // Pre-load the HD model at launch so the first HD read isn't a cold ~10s
+    // wait. Only acts when the HD engine is installed (so it's a no-op — "off" —
+    // for the default Kokoro-only setup).
+    @Published var autoLoadHD: Bool { didSet { d.set(autoLoadHD, forKey: "autoLoadHD") } }
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
@@ -84,6 +88,7 @@ final class Prefs: ObservableObject {
         readSource = ReadSource(rawValue: d.string(forKey: "readSource") ?? "") ?? .selection
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
+        autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false

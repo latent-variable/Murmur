@@ -110,6 +110,14 @@ private struct EngineTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            if state.hdInstalled {
+                Section {
+                    Toggle("Pre-load HD model at launch", isOn: $prefs.autoLoadHD)
+                    Text("Loads the HD voice in the background when the app starts, so your first HD read plays right away instead of a ~10-second cold start.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             if prefs.engine == "chatterbox" {
                 if !state.hdInstalled { enableSection } else { voicesSection; addSection; ethicsSection }
             } else {

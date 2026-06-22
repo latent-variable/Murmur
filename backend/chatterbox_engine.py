@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -69,6 +70,12 @@ class ChatterboxTurboEngine:
         self.device = "cpu"
         self.error: Optional[str] = None
         self._cached_ref: Optional[str] = None  # voice whose conditioning is loaded
+        # Serializes all model access. PyTorch/MPS is not thread-safe, and the
+        # FastAPI sync endpoints run in a threadpool — so a warm (voice switch)
+        # and a synth (read) can land concurrently. Without this they corrupt
+        # each other on the GPU and the read's segments silently fail. Reentrant
+        # because synth()/warm() call load() while already holding it.
+        self._lock = threading.RLock()
 
     def available(self) -> bool:
         """Are the heavy deps importable (without loading the model)?"""
@@ -100,29 +107,30 @@ class ChatterboxTurboEngine:
         perth.PerthImplicitWatermarker = _PassThrough  # type: ignore[attr-defined]
 
     def load(self) -> bool:
-        if self.model is not None:
-            return True
-        if not self.available():
-            self.error = "HD engine not installed"
-            return False
-        try:
-            _ensure_path()
-            import torch
-            self._install_watermarker()
-            self.device = "mps" if torch.backends.mps.is_available() else "cpu"
-            if self.device == "mps":
-                _patch_mps_float64(torch)  # Metal has no float64; downcast on ->mps
-            from chatterbox.tts_turbo import ChatterboxTurboTTS
-            log.info("loading Chatterbox Turbo on %s", self.device)
-            self.model = ChatterboxTurboTTS.from_pretrained(device=self.device)
-            self.error = None
-            self._warmup()
-            log.info("Chatterbox Turbo ready (%s)", self.device)
-            return True
-        except Exception as e:  # noqa: BLE001
-            self.error = str(e)
-            log.exception("failed to load Chatterbox Turbo")
-            return False
+        with self._lock:
+            if self.model is not None:
+                return True
+            if not self.available():
+                self.error = "HD engine not installed"
+                return False
+            try:
+                _ensure_path()
+                import torch
+                self._install_watermarker()
+                self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+                if self.device == "mps":
+                    _patch_mps_float64(torch)  # Metal has no float64; downcast on ->mps
+                from chatterbox.tts_turbo import ChatterboxTurboTTS
+                log.info("loading Chatterbox Turbo on %s", self.device)
+                self.model = ChatterboxTurboTTS.from_pretrained(device=self.device)
+                self.error = None
+                self._warmup()
+                log.info("Chatterbox Turbo ready (%s)", self.device)
+                return True
+            except Exception as e:  # noqa: BLE001
+                self.error = str(e)
+                log.exception("failed to load Chatterbox Turbo")
+                return False
 
     def _warmup(self) -> None:
         """First generate compiles the graph (~8s). Warm it with any reference
@@ -147,9 +155,10 @@ class ChatterboxTurboEngine:
         if self.model is None and not self.load():
             return False
         try:
-            if ref_path and Path(ref_path).exists():
-                self._prepare(ref_path)
-                self.model.generate("Ready.")  # compile the graph for this voice
+            with self._lock:   # never run concurrently with a synth on the GPU
+                if ref_path and Path(ref_path).exists():
+                    self._prepare(ref_path)
+                    self.model.generate("Ready.")  # compile the graph for this voice
             return True
         except Exception as e:  # noqa: BLE001
             log.warning("HD warm failed: %s", e)
@@ -162,8 +171,9 @@ class ChatterboxTurboEngine:
             raise RuntimeError(self.error or "HD engine not loaded")
         if not ref_path or not Path(ref_path).exists():
             raise RuntimeError("reference voice clip missing")
-        self._prepare(ref_path)                 # cached; cheap after first call
-        wav = self.model.generate(text)         # reuse cached conditioning
+        with self._lock:   # serialize GPU access — warm/synth must not overlap
+            self._prepare(ref_path)             # cached; cheap after first call
+            wav = self.model.generate(text)     # reuse cached conditioning
         arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
         return arr
 
