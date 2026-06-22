@@ -422,6 +422,7 @@ private struct ModelsTab: View {
     @State private var hdInstallLog = ""
     @State private var kokoroSize: String?
     @State private var hdSize: String?
+    @State private var sizeTask: Task<Void, Never>?
 
     private static let sizeFmt: ByteCountFormatter = {
         let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
@@ -433,13 +434,14 @@ private struct ModelsTab: View {
     private func refreshSizes() {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
-        Task.detached {
+        sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
+        sizeTask = Task {
             // static dirSizeBytes — no @MainActor state captured into this task.
-            let kb = kPresent ? AppState.dirSizeBytes(kdir) : 0
-            let hb = hdPresent ? AppState.dirSizeBytes(hdir) : 0
-            let kStr = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
-            let hStr = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
-            await MainActor.run { kokoroSize = kStr; hdSize = hStr }
+            let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
+            let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            if Task.isCancelled { return }
+            kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
+            hdSize = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
         }
     }
 

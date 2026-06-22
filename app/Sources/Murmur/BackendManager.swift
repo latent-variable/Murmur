@@ -46,12 +46,34 @@ final class BackendManager: ObservableObject {
         return nil
     }
 
+    /// HD engine installed on disk (torch present in hd-packages). The backend
+    /// can serve HD even when the Kokoro model files are absent — a cheap check
+    /// so `ready` doesn't depend solely on Kokoro.
+    var hdInstalledOnDisk: Bool {
+        let hd = modelsDir.deletingLastPathComponent().appending(path: "hd-packages")
+        return FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
+    }
+    /// Whether the Kokoro model files are present (from the last /health). Distinct
+    /// from `ready`: the backend can be ready (HD) with Kokoro deleted.
+    @Published private(set) var kokoroFilesPresent = false
+
+    /// Apply a /health response to published state. `ready` means the backend can
+    /// serve *some* engine — Kokoro loaded OR HD installed — so deleting one model
+    /// doesn't make the backend look dead.
+    private func apply(_ h: HealthInfo) {
+        kokoroFilesPresent = h.files_present
+        ready = h.model_loaded || hdInstalledOnDisk
+        lastError = (h.files_present || hdInstalledOnDisk) ? nil : "Model files not installed."
+    }
+
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
         if let h = await client.health() {
-            ready = h.model_loaded
-            if !h.files_present { lastError = "Model files not installed." }
+            apply(h)
             if ready { return }
+            // Responsive but nothing installable (no Kokoro files, no HD) — don't
+            // launch/spin waiting for a model that was deleted.
+            if !h.files_present && !hdInstalledOnDisk { return }
         }
         launchProcess()
         await waitForHealth()
@@ -141,9 +163,11 @@ final class BackendManager: ObservableObject {
     private func waitForHealth() async {
         for _ in 0..<120 { // up to ~60s (covers first-run install/model load)
             if let h = await client.health() {
-                ready = h.model_loaded
-                lastError = h.files_present ? nil : "Model files not installed."
+                apply(h)
                 if ready { return }
+                // Responsive but no model will ever load (Kokoro deleted, no HD) —
+                // stop waiting instead of hanging the full 60s.
+                if !h.files_present && !hdInstalledOnDisk { return }
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }

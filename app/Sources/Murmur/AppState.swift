@@ -142,7 +142,9 @@ final class AppState: ObservableObject {
             status = .loadingModel
             await backend.start()
             let health = await backend.client.health()
-            modelsPresent = backend.ready || (health?.files_present ?? false)
+            // Kokoro presence is its own files — NOT backend.ready, which is true
+            // whenever any engine (incl. HD) can serve.
+            modelsPresent = health?.files_present ?? backend.kokoroFilesPresent
             voices = await backend.client.voices()
             refreshHD()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
@@ -389,7 +391,7 @@ final class AppState: ObservableObject {
     /// Total on-disk size of a directory, in bytes (0 if missing). static + pure
     /// FileManager so callers run it off the main actor without capturing any
     /// @MainActor state (it walks the whole tree — never call it from a body).
-    static func dirSizeBytes(_ url: URL) -> Int64 {
+    nonisolated static func dirSizeBytes(_ url: URL) -> Int64 {
         guard let en = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) else { return 0 }
         var total: Int64 = 0
@@ -404,7 +406,9 @@ final class AppState: ObservableObject {
     /// Kokoro until it's re-downloaded; callers should confirm first. Bounces the
     /// backend so its in-memory state matches disk.
     func deleteKokoroModel() {
+        guard backend.ownsProcess else { return }  // unsafe against a reused backend
         stop()
+        modelsPresent = false   // reflect immediately; guards re-entry while deleting
         let dir = backend.modelsDir
         Task {
             await Task.detached(priority: .background) {
@@ -412,7 +416,7 @@ final class AppState: ObservableObject {
                 catch { Log.write("delete Kokoro model failed: \(error)") }
             }.value
             await backend.restart()
-            modelsPresent = backend.ready
+            modelsPresent = backend.kokoroFilesPresent
         }
     }
 
@@ -420,7 +424,9 @@ final class AppState: ObservableObject {
     /// back to Kokoro if HD was the active engine. Re-installable from this tab or
     /// the Engine tab. Callers should confirm first.
     func deleteHDModel() {
+        guard backend.ownsProcess else { return }  // unsafe against a reused backend
         stop()
+        hdInstalled = false     // reflect immediately; guards re-entry while deleting
         if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
         Task {
