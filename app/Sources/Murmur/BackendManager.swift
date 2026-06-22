@@ -180,6 +180,17 @@ final class BackendManager: ObservableObject {
         ownsProcess = false
     }
 
+    /// Terminate the backend process and WAIT for it to exit, so its file handles
+    /// are released before a caller deletes model files. (stop() returns before
+    /// the process has actually exited — a fixed sleep would race the unlink.)
+    func stopAndWait() async {
+        guard let p = process else { ownsProcess = false; return }
+        p.terminate()
+        await Task.detached(priority: .background) { p.waitUntilExit() }.value
+        process = nil
+        ownsProcess = false
+    }
+
     /// Restart the backend (e.g. after installing HD deps, to load the new env).
     func restart() async {
         stop()

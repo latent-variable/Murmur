@@ -455,7 +455,9 @@ private struct ModelsTab: View {
                 }
                 LabeledContent("Location", value: state.backend.modelsDir.path)
                     .font(.caption)
-                if dl.downloading {
+                if state.deletingKokoro {
+                    HStack { ProgressView().controlSize(.small); Text("Deleting model…").font(.caption) }
+                } else if dl.downloading {
                     ProgressView(value: dl.progress) { Text(dl.statusText).font(.caption) }
                 } else if !state.modelsPresent {
                     Button("Download model (~340 MB)") { dl.start() }
@@ -481,7 +483,9 @@ private struct ModelsTab: View {
                 }
                 LabeledContent("Location", value: state.hdPackagesDir.path)
                     .font(.caption)
-                if hdInstalling {
+                if state.deletingHD {
+                    HStack { ProgressView().controlSize(.small); Text("Deleting model…").font(.caption) }
+                } else if hdInstalling {
                     HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
                     ScrollView { Text(hdInstallLog).font(.caption.monospaced())
                         .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 90).border(.quaternary)

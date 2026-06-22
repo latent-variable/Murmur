@@ -37,6 +37,8 @@ final class AppState: ObservableObject {
     @Published var lastCleaned: String = ""
     @Published var lastMethod: Capture.Method = .none
     @Published var modelsPresent = false
+    @Published var deletingKokoro = false   // delete in flight — block re-trigger/download
+    @Published var deletingHD = false
     @Published var axTrusted = Permissions.axTrusted
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
@@ -393,10 +395,11 @@ final class AppState: ObservableObject {
     /// @MainActor state (it walks the whole tree — never call it from a body).
     nonisolated static func dirSizeBytes(_ url: URL) -> Int64 {
         guard let en = FileManager.default.enumerator(
-            at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey]) else { return 0 }
+            at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey, .isDirectoryKey]) else { return 0 }
         var total: Int64 = 0
         for case let f as URL in en {
-            let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+            let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey, .isDirectoryKey])
+            if v?.isDirectory == true { continue }  // count files only
             total += Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
         }
         return total
@@ -408,20 +411,21 @@ final class AppState: ObservableObject {
     func deleteKokoroModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
         stop()                  // stop playback
-        modelsPresent = false   // reflect immediately; guards re-entry while deleting
+        deletingKokoro = true   // block download/re-trigger until the bounce finishes
+        modelsPresent = false   // reflect immediately
         let dir = backend.modelsDir
         Task {
-            // Terminate the backend PROCESS first so it isn't holding the model
-            // files open while we delete them, then relaunch against the now-empty
-            // dir. (stop() above only stops playback.)
-            backend.stop()
-            try? await Task.sleep(nanoseconds: 500_000_000)  // let it exit
+            // Terminate the backend PROCESS and wait for it to exit so it isn't
+            // holding the model files open, then delete and relaunch against the
+            // now-empty dir. (stop() above only stops playback.)
+            await backend.stopAndWait()
             await Task.detached(priority: .background) {
                 do { try FileManager.default.removeItem(at: dir) }
                 catch { Log.write("delete Kokoro model failed: \(error)") }
             }.value
             await backend.start()
             modelsPresent = backend.kokoroFilesPresent
+            deletingKokoro = false
         }
     }
 
@@ -431,20 +435,22 @@ final class AppState: ObservableObject {
     func deleteHDModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
         stop()                  // stop playback
-        hdInstalled = false     // reflect immediately; guards re-entry while deleting
+        deletingHD = true       // block install/re-trigger until the bounce finishes
+        hdInstalled = false     // reflect immediately
         if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
         Task {
-            // Terminate the backend PROCESS first so it isn't importing torch from
-            // hd-packages while we delete it, then relaunch in the Kokoro-only env.
-            backend.stop()
-            try? await Task.sleep(nanoseconds: 500_000_000)  // let it exit
+            // Terminate the backend PROCESS and wait for it to exit so it isn't
+            // importing torch from hd-packages while we delete it, then relaunch in
+            // the Kokoro-only env.
+            await backend.stopAndWait()
             await Task.detached(priority: .background) {
                 do { try FileManager.default.removeItem(at: dir) }
                 catch { Log.write("delete HD model failed: \(error)") }
             }.value
             await backend.start()
             refreshHD()
+            deletingHD = false
         }
     }
 
