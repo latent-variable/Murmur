@@ -37,6 +37,9 @@ final class AppState: ObservableObject {
     @Published var lastCleaned: String = ""
     @Published var lastMethod: Capture.Method = .none
     @Published var modelsPresent = false
+    @Published var deletingKokoro = false   // delete in flight — block re-trigger/download
+    @Published var deletingHD = false
+    @Published var installingHD = false     // HD install in flight — block concurrent installs
     @Published var axTrusted = Permissions.axTrusted
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
@@ -74,12 +77,16 @@ final class AppState: ObservableObject {
     let backend = BackendManager()
     let audio = AudioPlayer()
     let hotkey = HotKeyManager()
+    /// Owned here (not in the Settings view) so a Kokoro download keeps running
+    /// even if the user closes the Settings window mid-download.
+    let downloader: ModelDownloader
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
+        downloader = ModelDownloader(modelsDir: backend.modelsDir)
         hotkey.onFire = { [weak self] in self?.triggerRead() }
         audio.onFinished = { [weak self] in self?.finishIfDone() }
         // Live transport: dragging speed/pitch/volume affects audio immediately,
@@ -142,7 +149,9 @@ final class AppState: ObservableObject {
             status = .loadingModel
             await backend.start()
             let health = await backend.client.health()
-            modelsPresent = backend.ready || (health?.files_present ?? false)
+            // Kokoro presence is its own files — NOT backend.ready, which is true
+            // whenever any engine (incl. HD) can serve.
+            modelsPresent = health?.files_present ?? backend.kokoroFilesPresent
             voices = await backend.client.voices()
             refreshHD()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
@@ -161,6 +170,7 @@ final class AppState: ObservableObject {
         // TextCapture.isCapturing too: a trigger while already reading keeps
         // status == .reading, so the status check alone would miss it.
         if status == .capturing || TextCapture.isCapturing { return }
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         let wasPlaying = (status == .reading || status == .paused)
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }
@@ -220,6 +230,7 @@ final class AppState: ObservableObject {
     /// Read a specific string directly (e.g. from the macOS Services menu),
     /// bypassing capture. Supersedes any current read.
     func readAloud(_ raw: String) {
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         let cleaned = cleanedText(raw)
         guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         generation += 1
@@ -326,6 +337,7 @@ final class AppState: ObservableObject {
     }
 
     func testVoice() {
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         Task {
             if !backend.ready { await backend.start() }
             guard backend.ready else { status = .error("Backend not ready"); return }
@@ -386,20 +398,104 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
-    func installHD(onLine: @escaping (String) -> Void) {
-        Task {
-            do {
-                try await backend.client.installChatterbox { line in
-                    Task { @MainActor in onLine(line) }
-                }
-            } catch {
-                onLine("install error: \(error.localizedDescription)")
-            }
-            onLine("restarting engine…")
-            await backend.restart()
-            refreshHD()
-            onLine("HD ready: \(hdInstalled)")
+    /// Total on-disk size of a directory, in bytes (0 if missing). static + pure
+    /// FileManager so callers run it off the main actor without capturing any
+    /// @MainActor state (it walks the whole tree — never call it from a body).
+    nonisolated static func dirSizeBytes(_ url: URL) -> Int64 {
+        guard let en = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileSizeKey, .isDirectoryKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in en {
+            let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey, .isDirectoryKey])
+            if v?.isDirectory == true { continue }  // count files only
+            total += Int64(v?.totalFileAllocatedSize ?? v?.fileSize ?? 0)
         }
+        return total
+    }
+
+    /// Delete the Kokoro model files to reclaim disk. The app can't speak with
+    /// Kokoro until it's re-downloaded; callers should confirm first. Bounces the
+    /// backend so its in-memory state matches disk.
+    func deleteKokoroModel() {
+        guard backend.ownsProcess else { return }  // unsafe against a reused backend
+        guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
+        stop()                  // stop playback
+        deletingKokoro = true   // block download/re-trigger until the bounce finishes
+        modelsPresent = false   // reflect immediately
+        let dir = backend.modelsDir
+        Task {
+            // Terminate the backend PROCESS and wait for it to exit so it isn't
+            // holding the model files open, then delete and relaunch against the
+            // now-empty dir. (stop() above only stops playback.)
+            await backend.stopAndWait()
+            await Task.detached(priority: .background) {
+                do { try FileManager.default.removeItem(at: dir) }
+                catch { Log.write("delete Kokoro model failed: \(error)") }
+            }.value
+            await backend.start()
+            modelsPresent = backend.kokoroFilesPresent
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
+            deletingKokoro = false
+        }
+    }
+
+    /// After (re)downloading the Kokoro model, the already-running sidecar won't
+    /// pick up the new files on its own — restart it so it loads them, then sync
+    /// UI state. (Codex P1: start() would just reuse the running, model-less
+    /// process.)
+    func reloadAfterKokoroDownload() {
+        Task {
+            await backend.restart()
+            modelsPresent = backend.kokoroFilesPresent
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
+        }
+    }
+
+    /// Delete the on-demand HD engine + weights (~1.3 GB) to reclaim disk. Falls
+    /// back to Kokoro if HD was the active engine. Re-installable from this tab or
+    /// the Engine tab. Callers should confirm first.
+    func deleteHDModel() {
+        guard backend.ownsProcess else { return }  // unsafe against a reused backend
+        guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
+        stop()                  // stop playback
+        deletingHD = true       // block install/re-trigger until the bounce finishes
+        hdInstalled = false     // reflect immediately
+        if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
+        let dir = hdPackagesDir
+        Task {
+            // Terminate the backend PROCESS and wait for it to exit so it isn't
+            // importing torch from hd-packages while we delete it, then relaunch in
+            // the Kokoro-only env.
+            await backend.stopAndWait()
+            await Task.detached(priority: .background) {
+                do { try FileManager.default.removeItem(at: dir) }
+                catch { Log.write("delete HD model failed: \(error)") }
+            }.value
+            await backend.start()
+            refreshHD()
+            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
+            deletingHD = false
+        }
+    }
+
+    /// Install the HD engine, streaming progress via `onLine`. Awaitable so
+    /// callers can flip their own UI flags on completion instead of scraping the
+    /// log text.
+    func installHD(onLine: @escaping (String) -> Void) async {
+        guard !installingHD else { return }   // one install at a time
+        installingHD = true
+        defer { installingHD = false }
+        do {
+            try await backend.client.installChatterbox { line in
+                Task { @MainActor in onLine(line) }
+            }
+        } catch {
+            onLine("install error: \(error.localizedDescription)")
+        }
+        onLine("restarting engine…")
+        await backend.restart()
+        refreshHD()
+        onLine("HD ready: \(hdInstalled)")
     }
 
     /// Import an audio file as a Chatterbox reference voice (converted to a

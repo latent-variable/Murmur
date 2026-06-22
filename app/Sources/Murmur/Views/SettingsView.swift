@@ -157,7 +157,10 @@ private struct EngineTab: View {
             } else {
                 Button("Download & enable HD") {
                     installing = true; installLog = ""
-                    state.installHD { line in installLog += line + "\n"; if line.contains("HD ready") { installing = false } }
+                    Task {
+                        await state.installHD { line in installLog += line + "\n" }
+                        installing = false
+                    }
                 }.buttonStyle(.borderedProminent)
             }
         }
@@ -412,18 +415,58 @@ private struct HotKeyRecorder: View {
 
 private struct ModelsTab: View {
     @EnvironmentObject var state: AppState
-    @StateObject private var dl = ModelDownloader(modelsDir: AppState.shared.backend.modelsDir)
+    // Owned by AppState so a download survives closing the Settings window.
+    @ObservedObject private var dl = AppState.shared.downloader
+    @State private var confirmDeleteKokoro = false
+    @State private var confirmDeleteHD = false
+    @State private var hdInstalling = false
+    @State private var hdInstallLog = ""
+    @State private var kokoroSize: String?
+    @State private var hdSize: String?
+    @State private var sizeTask: Task<Void, Never>?
+
+    private static let sizeFmt: ByteCountFormatter = {
+        let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
+        return f
+    }()
+
+    /// Walk model dirs off the main actor (can be large) and cache the formatted
+    /// sizes — never size a directory inside the SwiftUI body.
+    private func refreshSizes() {
+        let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
+        let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
+        sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
+        sizeTask = Task {
+            // static dirSizeBytes — no @MainActor state captured into this task.
+            let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
+            let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            if Task.isCancelled { return }
+            kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
+            hdSize = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
+        }
+    }
+
     var body: some View {
         Form {
             Section("Kokoro model") {
                 LabeledContent("Status",
                     value: state.modelsPresent ? "Installed" : "Not installed")
-                LabeledContent("Location", value: AppState.shared.backend.modelsDir.path)
+                if state.modelsPresent, let s = kokoroSize {
+                    LabeledContent("Size on disk", value: s)
+                }
+                LabeledContent("Location", value: state.backend.modelsDir.path)
                     .font(.caption)
-                if dl.downloading {
+                if state.deletingKokoro {
+                    HStack { ProgressView().controlSize(.small); Text("Deleting model…").font(.caption) }
+                } else if dl.downloading {
                     ProgressView(value: dl.progress) { Text(dl.statusText).font(.caption) }
                 } else if !state.modelsPresent {
                     Button("Download model (~340 MB)") { dl.start() }
+                } else if state.backend.ownsProcess {
+                    Button("Delete model", role: .destructive) { confirmDeleteKokoro = true }
+                } else {
+                    Text("Connected to a backend Murmur didn't start — restart Murmur to manage models.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if let e = dl.error { Text(e).font(.caption).foregroundStyle(.red) }
                 if dl.done { Text("Downloaded. Restart playback to load.").font(.caption).foregroundStyle(.green) }
@@ -436,18 +479,54 @@ private struct ModelsTab: View {
             Section("HD model (Chatterbox)") {
                 LabeledContent("Status",
                     value: state.hdInstalled ? "Installed" : "Not installed")
+                if state.hdInstalled, let s = hdSize {
+                    LabeledContent("Size on disk", value: s)
+                }
                 LabeledContent("Location", value: state.hdPackagesDir.path)
                     .font(.caption)
-                if !state.hdInstalled {
-                    Text("Optional ~1.3 GB engine for natural, cloned voices. Download it from the Engine tab.")
+                if state.deletingHD {
+                    HStack { ProgressView().controlSize(.small); Text("Deleting model…").font(.caption) }
+                } else if hdInstalling {
+                    HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
+                    ScrollView { Text(hdInstallLog).font(.caption.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 90).border(.quaternary)
+                } else if !state.hdInstalled {
+                    Text("Optional ~1.3 GB engine for natural, cloned voices.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Download & install HD") {
+                        hdInstalling = true; hdInstallLog = ""
+                        Task {
+                            await state.installHD { line in hdInstallLog += line + "\n" }
+                            hdInstalling = false
+                        }
+                    }.buttonStyle(.borderedProminent)
+                } else if state.backend.ownsProcess {
+                    Button("Delete model", role: .destructive) { confirmDeleteHD = true }
+                } else {
+                    Text("Connected to a backend Murmur didn't start — restart Murmur to manage models.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
-        .onAppear { state.refreshHD() }
+        .onAppear { state.refreshHD(); refreshSizes() }
+        .onChange(of: state.modelsPresent) { _, _ in refreshSizes() }
+        .onChange(of: state.hdInstalled) { _, _ in refreshSizes() }
+        .onChange(of: hdInstalling) { _, _ in refreshSizes() }
         .onChange(of: dl.done) { _, done in
-            if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready } }
+            if done { state.reloadAfterKokoroDownload(); refreshSizes() }
+        }
+        .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { kokoroSize = nil; state.deleteKokoroModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Frees ~340 MB. Murmur can't speak with Kokoro until you download it again.")
+        }
+        .confirmationDialog("Delete the HD model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { hdSize = nil; state.deleteHDModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
         }
     }
 }

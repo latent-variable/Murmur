@@ -5,6 +5,10 @@ import AppKit
 @MainActor
 final class BackendManager: ObservableObject {
     @Published var ready = false
+    /// True only when THIS app spawned the backend process (vs reusing an
+    /// already-running one). Model deletion is unsafe against a backend we don't
+    /// own — restart() can't replace it, so it would keep serving deleted files.
+    @Published private(set) var ownsProcess = false
     @Published var lastError: String?
 
     private var process: Process?
@@ -42,12 +46,40 @@ final class BackendManager: ObservableObject {
         return nil
     }
 
+    /// App-support base, WITHOUT the directory-creating side effect of `modelsDir`
+    /// (which would re-create an empty models dir just from an existence check).
+    private var appSupportMurmur: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Murmur")
+    }
+    /// HD engine installed on disk (torch present in hd-packages). The backend
+    /// can serve HD even when the Kokoro model files are absent — a cheap check
+    /// so `ready` doesn't depend solely on Kokoro.
+    var hdInstalledOnDisk: Bool {
+        let hd = appSupportMurmur.appending(path: "hd-packages")
+        return FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
+    }
+    /// Whether the Kokoro model files are present (from the last /health). Distinct
+    /// from `ready`: the backend can be ready (HD) with Kokoro deleted.
+    @Published private(set) var kokoroFilesPresent = false
+
+    /// Apply a /health response to published state. `ready` means the backend can
+    /// serve *some* engine — Kokoro loaded OR HD installed — so deleting one model
+    /// doesn't make the backend look dead.
+    private func apply(_ h: HealthInfo) {
+        kokoroFilesPresent = h.files_present
+        ready = h.model_loaded || hdInstalledOnDisk
+        lastError = (h.files_present || hdInstalledOnDisk) ? nil : "Model files not installed."
+    }
+
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
         if let h = await client.health() {
-            ready = h.model_loaded
-            if !h.files_present { lastError = "Model files not installed." }
+            apply(h)
             if ready { return }
+            // Responsive but nothing installable (no Kokoro files, no HD) — don't
+            // launch/spin waiting for a model that was deleted.
+            if !h.files_present && !hdInstalledOnDisk { return }
         }
         launchProcess()
         await waitForHealth()
@@ -130,16 +162,24 @@ final class BackendManager: ObservableObject {
             p.standardOutput = fh
             p.standardError = fh
         }
-        do { try p.run(); process = p }
+        do { try p.run(); process = p; ownsProcess = true }
         catch { lastError = "Failed to launch backend: \(error.localizedDescription)" }
     }
 
     private func waitForHealth() async {
         for _ in 0..<120 { // up to ~60s (covers first-run install/model load)
+            // If we own the process and it has already exited, it crashed on
+            // startup — fail fast instead of polling /health for 60s.
+            if let p = process, !p.isRunning {
+                if lastError == nil { lastError = "Backend exited unexpectedly." }
+                return
+            }
             if let h = await client.health() {
-                ready = h.model_loaded
-                lastError = h.files_present ? nil : "Model files not installed."
+                apply(h)
                 if ready { return }
+                // Responsive but no model will ever load (Kokoro deleted, no HD) —
+                // stop waiting instead of hanging the full 60s.
+                if !h.files_present && !hdInstalledOnDisk { return }
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
@@ -149,6 +189,25 @@ final class BackendManager: ObservableObject {
     func stop() {
         process?.terminate()
         process = nil
+        ownsProcess = false
+    }
+
+    /// Terminate the backend process and WAIT for it to exit, so its file handles
+    /// are released before a caller deletes model files. (stop() returns before
+    /// the process has actually exited — a fixed sleep would race the unlink.)
+    func stopAndWait() async {
+        guard let p = process else { ownsProcess = false; return }
+        p.terminate()
+        // Wait up to ~5s for exit; never hang the UI if the process ignores
+        // SIGTERM (the unlink that follows works on still-open files anyway).
+        let deadline = Date().addingTimeInterval(5)
+        while p.isRunning && Date() < deadline {
+            // do/catch (not try?) so cancellation breaks instead of busy-spinning:
+            // try? would swallow CancellationError and burn CPU until the deadline.
+            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+        }
+        process = nil
+        ownsProcess = false
     }
 
     /// Restart the backend (e.g. after installing HD deps, to load the new env).
