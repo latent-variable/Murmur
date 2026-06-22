@@ -77,12 +77,16 @@ final class AppState: ObservableObject {
     let backend = BackendManager()
     let audio = AudioPlayer()
     let hotkey = HotKeyManager()
+    /// Owned here (not in the Settings view) so a Kokoro download keeps running
+    /// even if the user closes the Settings window mid-download.
+    let downloader: ModelDownloader
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
+        downloader = ModelDownloader(modelsDir: backend.modelsDir)
         hotkey.onFire = { [weak self] in self?.triggerRead() }
         audio.onFinished = { [weak self] in self?.finishIfDone() }
         // Live transport: dragging speed/pitch/volume affects audio immediately,

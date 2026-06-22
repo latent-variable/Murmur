@@ -415,7 +415,8 @@ private struct HotKeyRecorder: View {
 
 private struct ModelsTab: View {
     @EnvironmentObject var state: AppState
-    @StateObject private var dl = ModelDownloader(modelsDir: AppState.shared.backend.modelsDir)
+    // Owned by AppState so a download survives closing the Settings window.
+    @ObservedObject private var dl = AppState.shared.downloader
     @State private var confirmDeleteKokoro = false
     @State private var confirmDeleteHD = false
     @State private var hdInstalling = false
