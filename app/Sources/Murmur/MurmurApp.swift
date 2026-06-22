@@ -25,6 +25,7 @@ struct MurmurApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest") { Selftest.run() }
@@ -53,9 +54,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CLITest.run(path: path, profileName: prof)
         }
         NSApp.setActivationPolicy(.accessory) // menu-bar only
+        // Register the "Read with Murmur" Services-menu provider (see NSServices
+        // in Info.plist). Strong ref kept so it isn't deallocated.
+        NSApp.servicesProvider = serviceProvider
         AppState.shared.bootstrap()
     }
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.backend.stop()
+    }
+
+    private let serviceProvider = ServiceProvider()
+}
+
+/// Backs the macOS Services menu item. The system calls `readWithMurmur:…` with
+/// the selected text on a pasteboard; we hand it to AppState to speak.
+@MainActor
+final class ServiceProvider: NSObject {
+    // Services always dispatch on the main thread, so @MainActor on the class
+    // lets us call AppState directly. The error pointer is optional — Cocoa may
+    // pass nil when the caller doesn't want error details, so never
+    // force-dereference it.
+    @objc func readWithMurmur(_ pboard: NSPasteboard, userData: String?,
+                              error: AutoreleasingUnsafeMutablePointer<NSString>?) {
+        guard let text = pboard.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            error?.pointee = "No text to read." as NSString
+            return
+        }
+        AppState.shared.readAloud(text)
     }
 }
