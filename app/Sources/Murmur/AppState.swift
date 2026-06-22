@@ -99,10 +99,16 @@ final class AppState: ObservableObject {
 
     private var warming = false
     func warmHD() {
-        guard hdInstalled, !warming else { return }
+        // Don't warm during playback — the backend serializes model access, but
+        // warming mid-read would just stall the read behind a throwaway generate.
+        guard hdInstalled, !warming, status != .reading, status != .paused else { return }
         warming = true
         let voice = prefs.hdVoice
-        Task { await backend.client.warmChatterbox(voice: voice); warming = false; refreshHD() }
+        Task {
+            await backend.client.warmChatterbox(voice: voice)
+            warming = false
+            hdWarm = true
+        }
     }
 
     /// On first run, copy the bundled open starter voices into the writable
@@ -323,6 +329,12 @@ final class AppState: ObservableObject {
             hdWarm = e.chatterbox?.loaded ?? false
             hdVoices = await backend.client.voices(engine: "chatterbox")
             if prefs.hdVoice.isEmpty, let first = hdVoices.first { prefs.hdVoice = first.id }
+            // Auto pre-load the HD model so the first HD read isn't a cold ~10s
+            // wait. Fires once per backend session (until loaded) when HD is
+            // installed and either it's the active engine or auto-load is on.
+            if hdInstalled && !hdWarm && (prefs.autoLoadHD || prefs.engine == "chatterbox") {
+                warmHD()
+            }
         }
     }
 
