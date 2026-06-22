@@ -13,20 +13,12 @@ struct Capture {
 /// that restores the user's original clipboard.
 enum TextCapture {
 
-    /// Async capture. The clipboard fallback may busy-wait up to 0.8s for the
-    /// pasteboard's changeCount to advance; running it off the main actor keeps
-    /// a slow or failed ⌘C from freezing the UI (callers are @MainActor).
+    /// Async capture on the main actor. NSPasteboard is not thread-safe, so all
+    /// pasteboard access stays on the main thread; the clipboard fallback's
+    /// up-to-0.8s wait yields the actor between polls (Task.sleep) instead of
+    /// blocking it, so a slow or failed ⌘C never freezes the UI.
+    @MainActor
     static func capture(mode: CaptureMode) async -> Capture {
-        await withCheckedContinuation { (cont: CheckedContinuation<Capture, Never>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                cont.resume(returning: captureSync(mode: mode))
-            }
-        }
-    }
-
-    /// Synchronous capture — used by the `--diag` CLI. App code should prefer the
-    /// async `capture(mode:)` so the wait never lands on the main actor.
-    static func captureSync(mode: CaptureMode) -> Capture {
         let trusted = Permissions.axTrusted
         Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted)")
         let result: Capture
@@ -35,13 +27,13 @@ enum TextCapture {
             result = viaAccessibility().map { Capture(text: $0, method: .accessibility) }
                 ?? Capture(text: "", method: .none)
         case .clipboard:
-            result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+            result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
                 ?? Capture(text: "", method: .none)
         case .auto:
             if let t = viaAccessibility(), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result = Capture(text: t, method: .accessibility)
             } else {
-                result = viaClipboard().map { Capture(text: $0, method: .clipboard) }
+                result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
                     ?? Capture(text: "", method: .none)
             }
         }
@@ -112,6 +104,37 @@ enum TextCapture {
         }
 
         // Only trust a genuinely fresh copy. No change => no selection => nil.
+        let text = changed ? pb.string(forType: .string) : nil
+        if !changed {
+            Log.write(Permissions.axTrusted
+                ? "clipboard: ⌘C produced no change (no selection?)"
+                : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
+        }
+
+        restore(pb, saved)
+        if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
+        return nil
+    }
+
+    /// Async twin of `viaClipboard`: identical logic and the same
+    /// never-return-the-stale-clipboard guarantee, but the wait yields the main
+    /// actor between polls (Task.sleep) instead of busy-waiting with usleep, so
+    /// it never freezes the UI. NSPasteboard stays on the main thread.
+    @MainActor
+    static func viaClipboardAsync() async -> String? {
+        let pb = NSPasteboard.general
+        let saved = snapshot(pb)
+        let beforeCount = pb.changeCount
+
+        sendCopy()
+
+        var changed = false
+        let deadline = Date().addingTimeInterval(0.8)
+        while Date() < deadline {
+            if pb.changeCount != beforeCount { changed = true; break }
+            try? await Task.sleep(nanoseconds: 15_000_000) // 15 ms, non-blocking
+        }
+
         let text = changed ? pb.string(forType: .string) : nil
         if !changed {
             Log.write(Permissions.axTrusted
