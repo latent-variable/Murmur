@@ -156,6 +156,9 @@ final class AppState: ObservableObject {
     func triggerRead() { Task { await runRead() } }
 
     private func runRead() async {
+        // Ignore a re-trigger fired during the (now async) capture window — the
+        // first capture is still in flight; a second would just race it.
+        if status == .capturing { return }
         let wasPlaying = (status == .reading || status == .paused)
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }
@@ -171,6 +174,10 @@ final class AppState: ObservableObject {
         } else {
             capture = await TextCapture.capture(mode: prefs.captureMode)
         }
+        // A newer trigger may have superseded us during the await — bail so we
+        // don't desync state (the stale run would set .reading but its stream is
+        // discarded by the generation check, leaving the app stuck).
+        guard gen == generation else { return }
         lastCaptured = capture.text
         lastMethod = capture.method
 

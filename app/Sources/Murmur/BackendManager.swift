@@ -98,6 +98,7 @@ final class BackendManager: ObservableObject {
             // and torch/chatterbox failed on the version mismatch.
             env.removeValue(forKey: "PYTHONHOME")
             env.removeValue(forKey: "PYTHONSTARTUP")
+            env["PYTHONNOUSERSITE"] = "1"   // ignore ~/.local site-packages
             if hdPresent {
                 env["PYTHONPATH"] = hd.path
             } else {

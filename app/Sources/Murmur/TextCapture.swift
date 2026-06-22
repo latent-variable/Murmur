@@ -138,8 +138,9 @@ enum TextCapture {
         sendCopy()
 
         var changed = false
-        let deadline = Date().addingTimeInterval(0.8)
-        while Date() < deadline {
+        // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.8
+        while ProcessInfo.processInfo.systemUptime < deadline {
             if pb.changeCount != beforeCount { changed = true; break }
             // Break (don't swallow) on cancellation — otherwise a cancelled
             // Task.sleep returns instantly and the loop spins hot to the deadline.
