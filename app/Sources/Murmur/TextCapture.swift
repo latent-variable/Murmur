@@ -132,7 +132,9 @@ enum TextCapture {
         let deadline = Date().addingTimeInterval(0.8)
         while Date() < deadline {
             if pb.changeCount != beforeCount { changed = true; break }
-            try? await Task.sleep(nanoseconds: 15_000_000) // 15 ms, non-blocking
+            // Break (don't swallow) on cancellation — otherwise a cancelled
+            // Task.sleep returns instantly and the loop spins hot to the deadline.
+            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { break } // 15 ms
         }
 
         let text = changed ? pb.string(forType: .string) : nil
