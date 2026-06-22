@@ -14,6 +14,12 @@ struct SettingsView: View {
             DiagnosticsTab().tabItem { Label("Diagnostics", systemImage: "stethoscope") }
         }
         .padding(16)
+        // Murmur runs as an accessory (menu-bar only) app, whose windows can't
+        // take keyboard focus — text fields (e.g. the custom-voice name) silently
+        // reject typing. Promote to a regular app while Settings is open so its
+        // window becomes key and accepts input, then drop back to accessory.
+        .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
+        .onDisappear { NSApp.setActivationPolicy(.accessory) }
     }
 }
 
@@ -186,20 +192,34 @@ private struct EngineTab: View {
     // MARK: add a voice
     private var addSection: some View {
         Section("Add a custom voice") {
-            TextField("Voice name (e.g. Sam)", text: $newName)
-            HStack {
-                Button { showImporter = true } label: { Label("Import audio file…", systemImage: "square.and.arrow.down") }
-                    .disabled(!nameReady || recorder.recording)
-                Button {
-                    recorder.toggle { url in
-                        if let url { state.addHDVoice(from: url, name: newName); newName = "" }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Step 1 — name this voice").font(.caption).bold().foregroundStyle(.secondary)
+                TextField("Type a name, e.g. Sam", text: $newName)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(recorder.recording)   // don't let the name change mid-record
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Step 2 — add 10–20s of audio")
+                    .font(.caption).bold()
+                    .foregroundStyle(nameReady ? .secondary : .tertiary)
+                HStack {
+                    Button { showImporter = true } label: { Label("Import audio file…", systemImage: "square.and.arrow.down") }
+                        .disabled(!nameReady || recorder.recording)
+                    Button {
+                        recorder.toggle { url in
+                            if let url { state.addHDVoice(from: url, name: newName); newName = "" }
+                        }
+                    } label: {
+                        Label(recorder.recording ? String(format: "Stop  %.0fs", recorder.elapsed) : "Record from mic",
+                              systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle")
                     }
-                } label: {
-                    Label(recorder.recording ? String(format: "Stop  %.0fs", recorder.elapsed) : "Record from mic",
-                          systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle")
+                    .disabled(!nameReady && !recorder.recording)
+                    .tint(recorder.recording ? .red : nil)
                 }
-                .disabled(!nameReady && !recorder.recording)
-                .tint(recorder.recording ? .red : nil)
+                if !nameReady {
+                    Text("Enter a name above to enable recording and importing.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
             if recorder.recording {
                 ProgressView(value: recorder.elapsed, total: recorder.maxSeconds)

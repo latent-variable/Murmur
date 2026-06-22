@@ -8,6 +8,10 @@ struct MenuContent: View {
     /// Open Settings and force it to the front, even when the app is an
     /// accessory (no dock icon) and the window is already buried behind others.
     private func showSettings() {
+        // Promote to a regular app so the Settings window can become key and
+        // accept keyboard input (accessory windows can't). SettingsView drops
+        // back to .accessory on close.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         openSettings()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
