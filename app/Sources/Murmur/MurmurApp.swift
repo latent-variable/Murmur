@@ -34,6 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("Log file: \(Log.url.path)")
             exit(0)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--audiotest"),
+           CommandLine.arguments.count > i + 1 {
+            let src = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+            let dest = FileManager.default.temporaryDirectory.appending(path: "murmur_audiotest.wav")
+            do {
+                try AudioImport.toReferenceWAV(src: src, dest: dest)
+                let sz = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size]) as? Int ?? 0
+                print("AudioImport OK -> \(dest.path) (\(sz) bytes)")
+            } catch {
+                print("AudioImport FAILED: \(error)")
+            }
+            exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--pipetest") {
             let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
             let prof = CommandLine.arguments.count > i + 2 ? CommandLine.arguments[i + 2] : nil
