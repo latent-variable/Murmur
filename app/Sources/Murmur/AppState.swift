@@ -165,6 +165,7 @@ final class AppState: ObservableObject {
         // TextCapture.isCapturing too: a trigger while already reading keeps
         // status == .reading, so the status check alone would miss it.
         if status == .capturing || TextCapture.isCapturing { return }
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         let wasPlaying = (status == .reading || status == .paused)
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }
@@ -224,6 +225,7 @@ final class AppState: ObservableObject {
     /// Read a specific string directly (e.g. from the macOS Services menu),
     /// bypassing capture. Supersedes any current read.
     func readAloud(_ raw: String) {
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         let cleaned = cleanedText(raw)
         guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         generation += 1
@@ -330,6 +332,7 @@ final class AppState: ObservableObject {
     }
 
     func testVoice() {
+        if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         Task {
             if !backend.ready { await backend.start() }
             guard backend.ready else { status = .error("Backend not ready"); return }
@@ -410,6 +413,7 @@ final class AppState: ObservableObject {
     /// backend so its in-memory state matches disk.
     func deleteKokoroModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
+        guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
         stop()                  // stop playback
         deletingKokoro = true   // block download/re-trigger until the bounce finishes
         modelsPresent = false   // reflect immediately
@@ -434,6 +438,7 @@ final class AppState: ObservableObject {
     /// the Engine tab. Callers should confirm first.
     func deleteHDModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
+        guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
         stop()                  // stop playback
         deletingHD = true       // block install/re-trigger until the bounce finishes
         hdInstalled = false     // reflect immediately

@@ -46,11 +46,17 @@ final class BackendManager: ObservableObject {
         return nil
     }
 
+    /// App-support base, WITHOUT the directory-creating side effect of `modelsDir`
+    /// (which would re-create an empty models dir just from an existence check).
+    private var appSupportMurmur: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Murmur")
+    }
     /// HD engine installed on disk (torch present in hd-packages). The backend
     /// can serve HD even when the Kokoro model files are absent — a cheap check
     /// so `ready` doesn't depend solely on Kokoro.
     var hdInstalledOnDisk: Bool {
-        let hd = modelsDir.deletingLastPathComponent().appending(path: "hd-packages")
+        let hd = appSupportMurmur.appending(path: "hd-packages")
         return FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
     }
     /// Whether the Kokoro model files are present (from the last /health). Distinct
@@ -162,6 +168,12 @@ final class BackendManager: ObservableObject {
 
     private func waitForHealth() async {
         for _ in 0..<120 { // up to ~60s (covers first-run install/model load)
+            // If we own the process and it has already exited, it crashed on
+            // startup — fail fast instead of polling /health for 60s.
+            if let p = process, !p.isRunning {
+                if lastError == nil { lastError = "Backend exited unexpectedly." }
+                return
+            }
             if let h = await client.health() {
                 apply(h)
                 if ready { return }
@@ -186,7 +198,12 @@ final class BackendManager: ObservableObject {
     func stopAndWait() async {
         guard let p = process else { ownsProcess = false; return }
         p.terminate()
-        await Task.detached(priority: .background) { p.waitUntilExit() }.value
+        // Wait up to ~5s for exit; never hang the UI if the process ignores
+        // SIGTERM (the unlink that follows works on still-open files anyway).
+        await Task.detached(priority: .background) {
+            let deadline = Date().addingTimeInterval(5)
+            while p.isRunning && Date() < deadline { usleep(50_000) }
+        }.value
         process = nil
         ownsProcess = false
     }
