@@ -116,12 +116,21 @@ enum TextCapture {
         return nil
     }
 
+    // Guards against async re-entrancy: viaClipboardAsync yields the main actor
+    // during its wait, so a second trigger (double hotkey) could otherwise
+    // interleave save/copy/restore on the single global pasteboard and corrupt
+    // the user's clipboard. A concurrent attempt just returns nil.
+    @MainActor private static var isCapturing = false
+
     /// Async twin of `viaClipboard`: identical logic and the same
     /// never-return-the-stale-clipboard guarantee, but the wait yields the main
     /// actor between polls (Task.sleep) instead of busy-waiting with usleep, so
     /// it never freezes the UI. NSPasteboard stays on the main thread.
     @MainActor
     static func viaClipboardAsync() async -> String? {
+        guard !isCapturing else { return nil }
+        isCapturing = true
+        defer { isCapturing = false }
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
         let beforeCount = pb.changeCount
