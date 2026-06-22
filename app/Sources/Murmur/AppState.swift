@@ -169,7 +169,7 @@ final class AppState: ObservableObject {
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
             capture = Capture(text: pb, method: .clipboard)
         } else {
-            capture = TextCapture.capture(mode: prefs.captureMode)
+            capture = await TextCapture.capture(mode: prefs.captureMode)
         }
         lastCaptured = capture.text
         lastMethod = capture.method

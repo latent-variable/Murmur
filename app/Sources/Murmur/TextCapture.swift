@@ -13,7 +13,20 @@ struct Capture {
 /// that restores the user's original clipboard.
 enum TextCapture {
 
-    static func capture(mode: CaptureMode) -> Capture {
+    /// Async capture. The clipboard fallback may busy-wait up to 0.8s for the
+    /// pasteboard's changeCount to advance; running it off the main actor keeps
+    /// a slow or failed ⌘C from freezing the UI (callers are @MainActor).
+    static func capture(mode: CaptureMode) async -> Capture {
+        await withCheckedContinuation { (cont: CheckedContinuation<Capture, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                cont.resume(returning: captureSync(mode: mode))
+            }
+        }
+    }
+
+    /// Synchronous capture — used by the `--diag` CLI. App code should prefer the
+    /// async `capture(mode:)` so the wait never lands on the main actor.
+    static func captureSync(mode: CaptureMode) -> Capture {
         let trusted = Permissions.axTrusted
         Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted)")
         let result: Capture
