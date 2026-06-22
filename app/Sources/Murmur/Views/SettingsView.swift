@@ -432,8 +432,20 @@ private struct ModelsTab: View {
                 Text("Voices included: 54 across English, Spanish, French, Italian, Hindi, Japanese, Portuguese, and Chinese.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            Section("HD model (Chatterbox)") {
+                LabeledContent("Status",
+                    value: state.hdInstalled ? "Installed" : "Not installed")
+                LabeledContent("Location", value: state.hdPackagesDir.path)
+                    .font(.caption)
+                if !state.hdInstalled {
+                    Text("Optional ~1.3 GB engine for natural, cloned voices. Download it from the Engine tab.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
+        .onAppear { state.refreshHD() }
         .onChange(of: dl.done) { _, done in
             if done { Task { await state.backend.start(); state.modelsPresent = state.backend.ready } }
         }
