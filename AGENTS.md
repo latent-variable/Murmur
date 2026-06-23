@@ -227,3 +227,8 @@ an agent must keep:
   `claude-sonnet-4-6`, Haiku `claude-haiku-4-5-20251001`.
 - macOS 14+, Apple Silicon. Prefer native APIs (AVFoundation, Carbon hotkey,
   AXUIElement) over adding dependencies.
+
+## Agent context (scope + memory) <!-- agent-context: managed by ~/.agents/bin/project-sync.sh -->
+- You are in **PROJECT scope** (this repo). User-scope canon = `~/.agents` and transcends projects — don't conflate them. `.claude`/`.agents` here may be symlinks; verify with `readlink` before claiming a write landed.
+- Project memory + shared skills: `.agents/` (gitignored). Read `.agents/memory/MEMORY.md` first.
+- Commit **proactively + strategically** (canon doctrine): finished+tested chunk → commit. Commits are free. Refresh infra: `~/.agents/bin/project-sync.sh .`
