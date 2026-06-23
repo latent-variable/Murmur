@@ -190,6 +190,34 @@ original clipboard. It must never return the pre-existing clipboard on a failed
 copy — that's what made Murmur "read text I didn't select." The
 clipboard-restore invariant is covered by `--selftest`; keep it green.
 
+## Services menu ("Read with Murmur")
+
+A second entry point besides the hotkey: `NSServices` in `Info.plist` +
+`NSApp.servicesProvider = ServiceProvider()` in `MurmurApp.swift`. macOS hands
+the pasteboard text to `ServiceProvider.readWithMurmur(...)`, which calls
+`AppState.readAloud(_:)` — joins the read pipeline at preprocess, no capture.
+Gotchas: the provider and `AppDelegate` are `@MainActor` (Services dispatch on
+main), the error pointer is optional (never force-deref), and after install you
+must refresh the Services DB (`lsregister -f` + `pbs -update`) or the menu item
+won't appear.
+
+## Model management (Models tab)
+
+Users can delete/re-download each engine from Settings ▸ Models. Two invariants
+an agent must keep:
+
+- **Ownership.** Delete is only safe when the app spawned the backend
+  (`BackendManager.ownsProcess`). It can't replace a *reused* server, so deletion
+  is hidden/guarded otherwise. Deletes `stopAndWait()` the process (release file
+  handles) → remove files → `start()`.
+- **Readiness ≠ Kokoro.** `ready` = Kokoro loaded **or** HD on disk, so deleting
+  one model doesn't make the backend look dead and `waitForHealth()` doesn't spin
+  60s. Kokoro presence is `kokoroFilesPresent` (from `/health`), tracked
+  separately from `ready`. After re-downloading Kokoro the running (model-less)
+  sidecar must be **restarted**, not just `start()`ed, to load the new files.
+- Deleting HD removes `hd-packages` only — **cloned voices (`hd-voices`) are
+  kept** — and falls back to the Kokoro engine.
+
 ## Standing constraints
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the

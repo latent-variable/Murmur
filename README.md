@@ -28,12 +28,13 @@ First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibi
 
 ## What it does
 
-- **Read from anywhere** — Chrome, Safari, PDFs, Terminal, VS Code, Notes, Slack, Gmail, Markdown. Selected-text capture via the Accessibility API, with a clipboard-copy fallback that restores your clipboard.
+- **Read from anywhere** — Chrome, Safari, PDFs, Terminal, VS Code, Notes, Slack, Gmail, Markdown. Selected-text capture via the Accessibility API, with a clipboard-copy fallback that restores your clipboard. Or skip the hotkey: select text → right-click → **Services ▸ Read with Murmur**.
 - **Two voice engines, one dropdown:**
   - **Kokoro** (default) — 54 voices, 8 languages, instant, CPU. The everyday driver.
   - **Chatterbox Turbo HD** (opt-in) — markedly more natural speech on the GPU, with **voice cloning** from a ~10s reference clip. Ships a few clean open voices (CMU ARCTIC) and lets you add your own.
 - **Streaming playback** — audio starts while the rest synthesizes. Play / pause / stop; **live speed** (drag mid-readout), pitch, volume; natural pauses at sentence/line/paragraph boundaries.
 - **Smart cleanup** — strips Markdown, code fences, citations, terminal prompts, and more. Profiles for General / Markdown / Code / Blog / LLM output, plus editable regex rules with live preview.
+- **Manage your models** — **Settings ▸ Models** shows each engine's size on disk and lets you delete or re-download Kokoro (~340 MB) and HD (~1.3 GB) to reclaim space. Deleting HD keeps your cloned voices.
 - **Menu-bar utility** — status indicator, quick controls, settings. No dock icon. Fully local; HD audio is watermarked.
 
 ## Architecture
@@ -131,11 +132,12 @@ Shipped:
 - [x] Selectable compute provider (auto/CPU/CoreML) + backend test suite.
 - [x] **Self-contained: bundles its own Python runtime** — runs on Macs with no Python installed.
 - [x] **Chatterbox Turbo HD engine** — opt-in GPU voice cloning, unified voice picker, live speed, pre-buffered streaming.
+- [x] **Right-click → Read with Murmur** (macOS Services menu).
+- [x] **Model management** — delete / re-download either engine from Settings ▸ Models.
 
 Next:
 
 - [ ] Notarize + Developer ID sign (drop the quarantine/right-click step — needs Apple Developer account).
-- [ ] Right-click → "Read aloud" (macOS Services menu).
 - [ ] Per-app capture overrides and audio caching.
 - [ ] More export formats (MP3/AAC) and "save while reading".
 
