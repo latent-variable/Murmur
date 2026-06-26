@@ -1,10 +1,10 @@
 # Murmur
 
 > [!IMPORTANT]
-> **Murmur is superseded by [Parley](https://github.com/latent-variable/Parley).**
-> Parley is one local app giving your agents both a voice and ears: the same Kokoro text-to-speech as Murmur, plus speech-to-text dictation (Parakeet on the Apple Neural Engine). Voice and ears for your AI, fully on-device — no cloud, no account, no tracking.
+> **Murmur is superseded by [Yap](https://github.com/latent-variable/Yap).**
+> Yap is one local app giving your agents both a voice and ears: the same Kokoro text-to-speech as Murmur, plus speech-to-text dictation (Parakeet on the Apple Neural Engine). Voice and ears for your AI, fully on-device — no cloud, no account, no tracking.
 >
-> Murmur stays here as the standalone TTS-only tool, but new work happens in Parley. **For voice + dictation, use [Parley](https://github.com/latent-variable/Parley).**
+> Murmur stays here as the standalone TTS-only tool, but new work happens in Yap. **For voice + dictation, use [Yap](https://github.com/latent-variable/Yap).**
 
 **[Fluid Voice](https://github.com/altic-dev/FluidVoice), but for text-to-speech.** Fluid Voice turns your voice into text locally; Murmur does the reverse — highlight text anywhere on macOS, press a hotkey, hear it read aloud in a high-quality local [Kokoro](https://github.com/hexgrad/kokoro) voice. Fully local, fully private — no cloud, no account, no tracking.
 
